@@ -3,6 +3,8 @@ import { aiAvailable, aiDepth, lumaDepth, flatDepth, flip } from './depth.js';
 import { Recorder, download, probeFormat } from './recorder.js';
 import { encodeVideo, findEncoder } from './encoder.js';
 import { analyse, pickPoints, buildLinks, GeometryLayer, FONTS } from './geometry.js';
+import { BACKGROUNDS } from './backgrounds.js';
+import { EFFECTS, PALETTES, CHARSETS } from './effects.js';
 
 // ---------------------------------------------------------------- settings
 
@@ -13,7 +15,6 @@ const FORMATS = {
   wide: { w: 1920, h: 1080, label: 'Wide 16:9' },
 };
 const DENSITY = { sparse: 450, medium: 900, dense: 1400 };
-const PAPER = { light: '#eeefec', dark: '#000000' };
 const COLOR_MODES = { original: 0, ink: 1, negative: 2, duotone: 3 };
 const SCAN_AXES = { depth: 0, across: 1, down: 2 };
 const QUALITY_BPP = { standard: 0.12, high: 0.25, max: 0.5 }; // bits per pixel per frame
@@ -80,9 +81,10 @@ const DEFAULTS = {
   geoOpacity: 0.9,
   geoBox: false,
   geoReveal: false,
+  // background (per-background settings are added below from backgrounds.js)
+  bg: 'plain',
   // look
   colorMode: 'original',
-  paper: 'light',
   ink: '#111111',
   accent: '#e2231a',
   glow: false,
@@ -95,6 +97,16 @@ const DEFAULTS = {
   quality: 'high',
   duration: 10,
 };
+
+// Settings for every background and effect come from their descriptions.
+const bgKey = (bg, p) => `bg_${bg}_${p}`;
+const fxKey = (fx, p) => `fx_${fx}_${p}`;
+for (const bg of BACKGROUNDS) for (const p of bg.params) DEFAULTS[bgKey(bg.id, p.id)] = p.def;
+for (const fx of EFFECTS) {
+  DEFAULTS[fxKey(fx.id, 'on')] = false;
+  DEFAULTS[fxKey(fx.id, 'amount')] = fx.amount ?? 1;
+  for (const p of fx.params) DEFAULTS[fxKey(fx.id, p.id)] = p.def;
+}
 
 function loadSettings() {
   try {
@@ -225,12 +237,32 @@ const SECTIONS = [
     title: 'Look',
     controls: [
       { key: 'colorMode', type: 'seg', label: 'Colour', options: [['original', 'Original'], ['ink', 'Ink'], ['negative', 'Negative'], ['duotone', 'Duotone']] },
-      { key: 'paper', type: 'seg', label: 'Paper', options: [['light', 'Light'], ['dark', 'Dark']] },
       { key: 'ink', type: 'color', label: 'Ink' },
       { key: 'accent', type: 'color', label: 'Accent' },
       { key: 'glow', type: 'toggle', label: 'Glow' },
       { key: 'grain', type: 'range', label: 'Grain', min: 0, max: 0.2, step: 0.005 },
     ],
+  },
+  {
+    id: 'background',
+    title: 'Background',
+    controls: [
+      { key: 'bg', type: 'seg', label: 'Texture', options: BACKGROUNDS.map((b) => [b.id, b.label]) },
+      ...BACKGROUNDS.flatMap((b) => b.params.map((p) => ({ ...p, key: bgKey(b.id, p.id), show: () => S.bg === b.id }))),
+    ],
+  },
+  {
+    id: 'effects',
+    title: 'Effects',
+    note: 'Applied over everything, top to bottom in this order. Switch on as many as you like.',
+    controls: EFFECTS.flatMap((fx) => {
+      const on = () => S[fxKey(fx.id, 'on')];
+      return [
+        { type: 'subhead', key: fxKey(fx.id, 'on'), label: fx.label, note: fx.note },
+        { key: fxKey(fx.id, 'amount'), type: 'range', label: 'Amount', min: 0, max: 1, step: 0.01, show: on },
+        ...fx.params.map((p) => ({ ...p, key: fxKey(fx.id, p.id), show: on })),
+      ];
+    }),
   },
   {
     id: 'export',
@@ -283,7 +315,26 @@ function set(key, value) {
 }
 
 function buildControl(c) {
+  const node = buildControlInner(c);
+  if (c.show && node) refreshers.push(() => (node.hidden = !c.show()));
+  return node;
+}
+
+function buildControlInner(c) {
   const id = `c-${c.key || c.id}`;
+  if (c.type === 'subhead') {
+    const b = el('button', { type: 'button', role: 'switch', id, class: 'switch', 'aria-label': `${c.label} on`, onclick: () => set(c.key, !S[c.key]) });
+    const row = el('div', { class: 'ctl subhead' }, el('label', { for: id, title: c.note || '' }, c.label), b);
+    const wrap = el('div', { class: 'subhead-wrap' }, row);
+    const note = c.note ? el('p', { class: 'note' }, c.note) : null;
+    if (note) wrap.append(note);
+    refreshers.push(() => {
+      b.setAttribute('aria-checked', String(!!S[c.key]));
+      wrap.classList.toggle('on', !!S[c.key]);
+      if (note) note.hidden = !S[c.key];
+    });
+    return wrap;
+  }
   if (c.type === 'range') {
     const out = el('output', { for: id });
     const input = el('input', { id, type: 'range', min: c.min, max: c.max, step: c.step });
@@ -340,7 +391,7 @@ try {
 } catch {
   /* ignore */
 }
-if (!Object.keys(collapsed).length) collapsed = { geo: true, export: false };
+if (!Object.keys(collapsed).length) collapsed = { geo: true, effects: false, export: false };
 
 for (const section of SECTIONS) {
   const title = el('button', { type: 'button', class: 'sec-title', 'aria-expanded': 'true' }, el('h2', {}, section.title));
@@ -699,7 +750,7 @@ function onChange(key) {
     fontInput.click();
   }
   if (key === 'depthMode' || key === 'flipDepth') rebuildDepth();
-  if (key === 'trails' || key === 'paper') renderer.needsClear = true;
+  if (key === 'trails' || key === 'bg' || key.startsWith('bg_')) renderer.needsClear = true;
 }
 
 // ---------------------------------------------------------------- tempo
@@ -781,6 +832,60 @@ function updateRing(zoom) {
 const clock = { time: 0, scan: 0, last: performance.now() };
 const MORPH_SECONDS = 1.8;
 const fract = (x) => x - Math.floor(x);
+let lastKeyIdx = -1;
+
+function bgBase() {
+  return S[bgKey(S.bg, 'c1')] || '#eeefec';
+}
+function isDark(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return 0.299 * r + 0.587 * g + 0.114 * b < 0.4;
+}
+
+function bgParams() {
+  const def = BACKGROUNDS.find((b) => b.id === S.bg) || BACKGROUNDS[0];
+  const p = new Float32Array(8);
+  let i = 0;
+  const out = { type: def.type, p, c1: hexToRgb(bgBase()), c2: [0, 0, 0] };
+  for (const prm of def.params) {
+    const v = S[bgKey(def.id, prm.id)];
+    if (prm.type === 'color') out[prm.id] = hexToRgb(v);
+    else p[i++] = Number(v) || 0;
+  }
+  return out;
+}
+
+function effectParams(beats) {
+  const list = [];
+  for (const def of EFFECTS) {
+    if (!S[fxKey(def.id, 'on')]) continue;
+    const p = new Float32Array(8);
+    let i = 0;
+    const fx = { id: def.id, amount: S[fxKey(def.id, 'amount')], p, c1: [0, 0, 0], c2: [1, 1, 1] };
+    for (const prm of def.params) {
+      const v = S[fxKey(def.id, prm.id)];
+      if (prm.type === 'color') fx[prm.id] = hexToRgb(v);
+      else p[i++] = Number(v) || 0;
+    }
+    if (def.id === 'palette') {
+      const names = ['gameboy', 'cga1', 'cga2', 'ega', 'mac16', 'teletext', 'virtualboy'];
+      const idx = Number(S[fxKey('palette', 'palette')]);
+      const cols = names[idx] ? PALETTES[names[idx]] : [S.ink, S.accent, bgBase()];
+      fx.palette = new Float32Array(48);
+      cols.forEach((h, k) => fx.palette.set(hexToRgb(h), k * 3));
+      fx.paletteSize = cols.length;
+    }
+    if (def.id === 'ascii') fx.charset = CHARSETS[S[fxKey('ascii', 'charset')]] || CHARSETS.classic;
+    if (def.id === 'datamosh') {
+      const every = Number(S[fxKey('datamosh', 'keys')]);
+      const idx = every > 0 ? Math.floor(beats / every) : 0;
+      fx.keyframe = every > 0 && idx !== lastKeyIdx;
+      lastKeyIdx = idx;
+    }
+    list.push(fx);
+  }
+  return list;
+}
 let lastCount = 0;
 
 function step(dt) {
@@ -808,7 +913,8 @@ function frameParams() {
   const cycles = t / tp.cycle;
   const cyclePhase = fract(cycles);
   const barPhase = fract(t / tp.bar);
-  const beatPhase = fract(t / tp.beat);
+  const beats = t / tp.beat;
+  const beatPhase = fract(beats);
   const env = Math.exp(-beatPhase * 5);
 
   const yaw = cam.yaw + TAU * S.spin * cycles + Math.sin(TAU * cyclePhase) * 0.3 * S.sway;
@@ -863,8 +969,11 @@ function frameParams() {
     ink: hexToRgb(S.ink),
     accent: hexToRgb(S.accent),
     colorMode: COLOR_MODES[S.colorMode],
-    paper: hexToRgb(PAPER[S.paper]),
-    paperDark: S.paper === 'dark',
+    bg: bgParams(),
+    effects: effectParams(beats),
+    beatPhase,
+    beats,
+    paperDark: isDark(bgBase()),
     glow: S.glow,
     grain: S.grain,
     yaw,
@@ -910,11 +1019,11 @@ function drawGeometry(f) {
     sets.push({ ...a, plane: planeB, morphFrom: { plane: planeA, t: m }, weight: 1 - m });
     sets.push({ ...b, plane: planeB, morphFrom: { plane: planeA, t: m }, weight: m });
   }
-  const color = S.geoColor === 'accent' ? S.accent : S.geoColor === 'contrast' ? (S.paper === 'dark' ? '#ffffff' : '#000000') : S.ink;
+  const color = S.geoColor === 'accent' ? S.accent : S.geoColor === 'contrast' ? (isDark(bgBase()) ? '#ffffff' : '#000000') : S.ink;
   f.geo = {
     source: S.geoSource,
     color,
-    boxColor: PAPER[S.paper],
+    boxColor: bgBase(),
     lineWidth: S.geoLineWidth,
     opacity: S.geoOpacity,
     mark: S.geoMark,
@@ -1001,6 +1110,8 @@ async function renderVideo() {
   clock.scan = 0;
   pointer.burst = 0;
   renderer.needsClear = true;
+  renderer.moshFresh = true;
+  lastKeyIdx = -1;
   const started = performance.now();
   try {
     const blob = await encodeVideo({

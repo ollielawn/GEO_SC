@@ -34,6 +34,64 @@ vec3 noise3(vec3 p) {
 }
 `;
 
+// 2D noise for backgrounds and effects (same integer hash, so it's stable).
+const NOISE2 = /* glsl */ `
+float h2(ivec2 c, uint s) {
+  return float(pcg((uint(c.x) * 73856093u) ^ (uint(c.y) * 19349663u) ^ (s * 83492791u))) / 4294967295.0;
+}
+float h1(float a, uint s) { return h2(ivec2(int(a), 0), s); }
+float h1v(float a, float b, uint s) { return h2(ivec2(int(a), int(b)), s); }
+float vn2(vec2 x, uint s) {
+  vec2 fl = floor(x);
+  ivec2 i = ivec2(fl);
+  vec2 f = x - fl;
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h2(i, s), h2(i + ivec2(1, 0), s), f.x), mix(h2(i + ivec2(0, 1), s), h2(i + ivec2(1, 1), s), f.x), f.y);
+}
+float fbm2(vec2 x, uint s) {
+  float a = 0.5, r = 0.0;
+  for (int k = 0; k < 5; k++) { r += a * vn2(x, s + uint(k) * 7u); x *= 2.03; a *= 0.5; }
+  return r;
+}
+float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+vec3 rgb2ycc(vec3 c) { return vec3(lum(c), (c.b - lum(c)) * 0.564, (c.r - lum(c)) * 0.713); }
+vec3 ycc2rgb(vec3 y) { return vec3(y.x + 1.403 * y.z, y.x - 0.344 * y.y - 0.714 * y.z, y.x + 1.773 * y.y); }
+// Shadow-mask patterns shared by the CRT background and CRT effect. q is in 1080p pixels.
+vec3 crtMask(vec2 q, float size, int type) {
+  vec2 m = q / max(size, 0.5);
+  if (type == 1) { // slot mask: grille with staggered horizontal gaps
+    float col = floor(m.x / 3.0);
+    float gy = fract((m.y + mod(col, 2.0) * 1.5) / 3.0);
+    int k = int(mod(floor(m.x), 3.0));
+    vec3 c = k == 0 ? vec3(1, 0.15, 0.15) : k == 1 ? vec3(0.15, 1, 0.15) : vec3(0.15, 0.15, 1);
+    return c * smoothstep(0.0, 0.18, gy) * smoothstep(1.0, 0.82, gy);
+  }
+  if (type == 2) { // dot triads
+    vec2 cell = vec2(m.x / 3.0, m.y / 1.732);
+    float row = floor(cell.y);
+    cell.x += mod(row, 2.0) * 0.5;
+    vec2 f = fract(cell);
+    int k = int(mod(floor(cell.x * 3.0), 3.0));
+    float d = length(vec2(fract(cell.x * 3.0) - 0.5, f.y - 0.5));
+    vec3 c = k == 0 ? vec3(1, 0.1, 0.1) : k == 1 ? vec3(0.1, 1, 0.1) : vec3(0.1, 0.1, 1);
+    return c * smoothstep(0.5, 0.25, d);
+  }
+  int k = int(mod(floor(m.x), 3.0)); // aperture grille
+  float edge = smoothstep(0.0, 0.25, fract(m.x)) * smoothstep(1.0, 0.75, fract(m.x));
+  return (k == 0 ? vec3(1, 0.1, 0.1) : k == 1 ? vec3(0.1, 1, 0.1) : vec3(0.1, 0.1, 1)) * (0.4 + 0.6 * edge);
+}
+`;
+
+export const GLSL_COMMON = COMMON + NOISE2;
+
+export const COPY_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+uniform sampler2D uSrc;
+in vec2 vUv;
+out vec4 outColor;
+void main() { outColor = vec4(texture(uSrc, vUv).rgb, 1.0); }
+`;
+
 export const POINTS_VERT = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;

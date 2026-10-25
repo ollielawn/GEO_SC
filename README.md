@@ -48,7 +48,9 @@ After that the project is fully self-contained: it works offline and doesn't dep
 | Scan | A band that sweeps through depth, across or down. Particles at the front flash the accent colour and get kicked; behind it they burn toward ink and recover. |
 | Trails | Leaves fading copies of previous frames. |
 | Geometry | Finds points in the picture (corners, edges, bright spots, dark spots or the nearest areas), joins them (nearest neighbours, a chain or hubs), marks them and labels them with what was actually measured: corner or edge strength (0–1), brightness (0–255), depth (0–1), live screen position or an index. Choose a font or drop in your own `.ttf`/`.otf`/`.woff2`. Points ride along with the particles. **Reveal with scan** makes them appear as the scan passes. |
-| Look | Original, ink, negative or duotone colour; light or dark paper; glow (additive blending); film grain. |
+| Background | A procedural texture behind the particles, each with its own settings: **Plain**, **Receipt scan** (thermal lines, scanner streaks, fading, dust, bed shadow, creases), **Film grain** (grain size, flicker, dust and scratches, vignette, grain frame rate), **Digital noise** (luma and colour noise, pixel size, banding), **Magazine** (halftone screen, fibres, show-through from the other side, gloss), **Graph paper**, **CRT screen** (grille, slot or dot mask, scanlines, static), **VHS** (snow, tracking, colour bleed, wobble, head switching) and **Gradient**. Trails fade toward the texture. |
+| Effects | Post effects over everything, applied top to bottom. Each has an Amount and its own settings, and several follow the tempo. **Datamosh** (smears old frames along the motion, with a clean frame every N beats), **Circuit bend** (slipped lines, channel swaps, bit crush, inverts and corrupt blocks, firing N times per beat), **Low-res and JPEG** (big pixels, colour depth, 8×8 blocks, colour smear), **Retro palette** (Game Boy, CGA, EGA, Mac 16, Teletext, Virtual Boy or your own colours, with dithering), **1-bit dither** (Bayer, noise, lines or halftone, in two colours of your choice), **ASCII terminal** (green, amber, white, original or your colours), **RGB shift** (with a kick on every beat), **VHS** and **CRT** (curvature, scanlines, mask, glow, vignette, flicker). |
+| Look | Original, ink, negative or duotone colour; glow (additive blending); film grain. |
 
 Sections fold up: click a section title.
 
@@ -80,7 +82,7 @@ Instagram re-compresses everything you upload. Starting from a clean, high-bitra
 ## How it works
 
 ```
-picture ──► depth map ──► particles on the GPU ──► effects ──► trails buffer ──► canvas ──► video / PNG
+picture ──► depth map ──► background + particles (trails buffer) ──► composite (+ geometry) ──► effect chain ──► canvas ──► video / PNG
 ```
 
 | File | Role |
@@ -90,6 +92,8 @@ picture ──► depth map ──► particles on the GPU ──► effects ─
 | `js/renderer.js` | WebGL2 setup, textures, the trails buffer, drawing |
 | `js/shaders.js` | The GLSL. Every particle's position and colour is worked out from scratch each frame from its id, the picture, the depth map, the time and the settings. There's no simulation state, which keeps it fast and makes recordings repeatable. |
 | `js/depth.js` | AI, brightness and flat depth |
+| `js/backgrounds.js` | Background textures: their settings and the shader that draws them |
+| `js/effects.js` | Post effects: their settings, shaders, retro palettes and the ASCII glyph strip |
 | `js/geometry.js` | Feature detection (Sobel edges, Harris corners, brightness, depth), linking, labels, and a JS mirror of the shader motion so the overlay tracks the particles |
 | `js/encoder.js` | Offline render: WebCodecs H.264 encoder plus a small MP4 writer |
 | `js/recorder.js` | Live recording with MediaRecorder |

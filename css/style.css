@@ -402,3 +402,25 @@ body.rendering .sec-body, body.rendering .pictures { pointer-events: none; opaci
   #panel { border-left: 0; border-top: 1px solid var(--rule); overflow: visible; }
   .output { position: static; }
 }
+
+/* ---------------------------------------------------------------- effects list */
+
+[hidden] { display: none !important; }
+
+.subhead-wrap {
+  margin: 8px -18px 2px;
+  padding: 8px 18px 4px;
+  border-top: 1px dashed var(--rule);
+}
+.subhead-wrap:first-of-type { border-top: 0; }
+.ctl.subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+}
+.ctl.subhead label { font-weight: 700; }
+.subhead-wrap.on .ctl.subhead label { color: var(--ink); }
+.subhead-wrap:not(.on) .ctl.subhead label { color: var(--muted); font-weight: 600; }
+.subhead-wrap .note { margin: 4px 0 0; }

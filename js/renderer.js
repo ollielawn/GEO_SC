@@ -1,4 +1,6 @@
-import { POINTS_VERT, POINTS_FRAG, QUAD_VERT, FADE_FRAG, PRESENT_FRAG } from './shaders.js';
+import { POINTS_VERT, POINTS_FRAG, QUAD_VERT, PRESENT_FRAG, COPY_FRAG } from './shaders.js';
+import { BG_FRAG } from './backgrounds.js';
+import { EFFECTS, glyphAtlas } from './effects.js';
 import { perspective, multiply, translation, rotationX, rotationY } from './math.js';
 
 export const FOV = (30 * Math.PI) / 180;
@@ -45,8 +47,13 @@ export class Renderer {
     this.canvas = canvas;
     this.floatTargets = !!gl.getExtension('EXT_color_buffer_float');
     this.points = program(gl, POINTS_VERT, POINTS_FRAG);
-    this.fade = program(gl, QUAD_VERT, FADE_FRAG);
+    this.bg = program(gl, QUAD_VERT, BG_FRAG);
     this.present = program(gl, QUAD_VERT, PRESENT_FRAG);
+    this.copy = program(gl, QUAD_VERT, COPY_FRAG);
+    this.fxPrograms = {};
+    this.atlases = {};
+    this.post = null; // output-size targets for the effect chain
+    this.moshFresh = true;
     this.vao = gl.createVertexArray();
     this.fbo = null;
     this.frameTex = null;
@@ -100,7 +107,131 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.frameTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (this.post) Object.values(this.post).flat().forEach((t) => this.freeTarget(t));
+    this.post = {
+      a: this.target(w, h),
+      b: this.target(w, h),
+      prev: this.target(w, h),
+      hist: [this.target(w, h), this.target(w, h)],
+    };
+    this.histIdx = 0;
+    this.moshFresh = true;
     this.needsClear = true;
+  }
+
+  target(w, h) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { tex, fbo, w, h };
+  }
+
+  freeTarget(t) {
+    this.gl.deleteTexture(t.tex);
+    this.gl.deleteFramebuffer(t.fbo);
+  }
+
+  // Set uniforms from a plain object: numbers → float, arrays → vec, {int} → int.
+  uniforms(prog, values) {
+    const gl = this.gl;
+    for (const [name, v] of Object.entries(values)) {
+      const loc = prog.loc(name);
+      if (loc === null) continue;
+      if (typeof v === 'number') gl.uniform1f(loc, v);
+      else if (v && typeof v.int === 'number') gl.uniform1i(loc, v.int);
+      else if (name === 'uP') gl.uniform1fv(loc, v);
+      else if (name === 'uPal') gl.uniform3fv(loc, v);
+      else if (v.length === 2) gl.uniform2fv(loc, v);
+      else if (v.length === 3) gl.uniform3fv(loc, v);
+      else if (v.length === 4) gl.uniform4fv(loc, v);
+    }
+  }
+
+  texUnit(prog, name, unit, tex) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(prog.loc(name), unit);
+  }
+
+  fxProgram(id) {
+    if (!this.fxPrograms[id]) {
+      const def = EFFECTS.find((e) => e.id === id);
+      this.fxPrograms[id] = program(this.gl, QUAD_VERT, def.frag);
+    }
+    return this.fxPrograms[id];
+  }
+
+  atlas(chars) {
+    if (!this.atlases[chars]) {
+      const gl = this.gl;
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, glyphAtlas(chars));
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this.atlases[chars] = { tex, count: [...chars].length };
+    }
+    return this.atlases[chars];
+  }
+
+  applyEffect(fx, cur, f) {
+    const gl = this.gl;
+    const prog = this.fxProgram(fx.id);
+    const P = this.post;
+    const mosh = fx.id === 'datamosh';
+    const dst = mosh ? P.hist[this.histIdx ^ 1] : cur === P.a ? P.b : P.a;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
+    gl.viewport(0, 0, dst.w, dst.h);
+    gl.useProgram(prog.p);
+    this.texUnit(prog, 'uSrc', 0, cur.tex);
+    this.uniforms(prog, {
+      uRes: [this.width, this.height],
+      uUnit: Math.min(this.width, this.height) / 1080,
+      uTime: f.time,
+      uBeat: f.beatPhase,
+      uBeats: f.beats,
+      uAmount: fx.amount,
+      uP: fx.p,
+      uC1: fx.c1,
+      uC2: fx.c2,
+    });
+    if (mosh) {
+      this.texUnit(prog, 'uHist', 1, P.hist[this.histIdx].tex);
+      this.texUnit(prog, 'uPrevSrc', 2, (this.moshFresh ? cur : P.prev).tex);
+      gl.uniform1f(prog.loc('uKeyframe'), fx.keyframe || this.moshFresh ? 1 : 0);
+    } else if (fx.id === 'palette') {
+      gl.uniform3fv(prog.loc('uPal'), fx.palette);
+      gl.uniform1i(prog.loc('uPalN'), fx.paletteSize);
+    } else if (fx.id === 'ascii') {
+      const at = this.atlas(fx.charset);
+      this.texUnit(prog, 'uAtlas', 1, at.tex);
+      gl.uniform1f(prog.loc('uGlyphs'), at.count);
+    }
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (mosh) {
+      // Remember this frame's input for next frame's motion estimate.
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, cur.fbo);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, P.prev.fbo);
+      gl.blitFramebuffer(0, 0, cur.w, cur.h, 0, 0, cur.w, cur.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      this.histIdx ^= 1;
+      this.moshFresh = false;
+    }
+    return dst;
   }
 
   depthTexture(data, w, h) {
@@ -212,19 +343,27 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
     gl.viewport(0, 0, FW, FH);
     gl.bindVertexArray(this.vao);
-    const bg = f.paper;
-    if (!f.trails || this.needsClear) {
-      gl.disable(gl.BLEND);
-      gl.clearColor(bg[0], bg[1], bg[2], 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      this.needsClear = false;
-    } else {
+    // Background: drawn fully, or at low opacity over the last frame for trails.
+    const alpha = !f.trails || this.needsClear ? 1 : f.trailFade;
+    if (alpha >= 1) gl.disable(gl.BLEND);
+    else {
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.useProgram(this.fade.p);
-      gl.uniform4f(this.fade.loc('uFade'), bg[0], bg[1], bg[2], f.trailFade);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
+    gl.useProgram(this.bg.p);
+    this.uniforms(this.bg, {
+      uType: { int: f.bg.type },
+      uP: f.bg.p,
+      uC1: f.bg.c1,
+      uC2: f.bg.c2,
+      uRes: [W, H],
+      uSS: this.ss,
+      uUnit: Math.min(W, H) / 1080,
+      uTime: f.time,
+      uAlpha: alpha,
+    });
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.needsClear = false;
 
     const P = this.points;
     gl.useProgram(P.p);
@@ -286,23 +425,33 @@ export class Renderer {
     gl.uniform3fv(P.loc('uAccent'), f.accent);
     gl.uniform1i(P.loc('uColorMode'), f.colorMode);
     u1('uPaperDark', f.paperDark ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE0);
     gl.drawArrays(gl.POINTS, 0, gx * gy);
 
-    // ---- present to the canvas
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // ---- composite (downsample, grain, overlay) into the effect chain
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.post.a.fbo);
     gl.viewport(0, 0, W, H);
     gl.disable(gl.BLEND);
     gl.useProgram(this.present.p);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.frameTex);
-    gl.uniform1i(this.present.loc('uFrame'), 0);
-    gl.uniform1f(this.present.loc('uGrain'), f.grain);
-    gl.uniform1f(this.present.loc('uTime'), f.time);
-    gl.uniform2f(this.present.loc('uRes'), W, H);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.hasOverlay ? this.overlayTex : this.blank.color);
-    gl.uniform1i(this.present.loc('uOverlay'), 1);
-    gl.uniform1f(this.present.loc('uHasOverlay'), this.hasOverlay ? 1 : 0);
+    this.texUnit(this.present, 'uFrame', 0, this.frameTex);
+    this.texUnit(this.present, 'uOverlay', 1, this.hasOverlay ? this.overlayTex : this.blank.color);
+    this.uniforms(this.present, { uGrain: f.grain, uTime: f.time, uRes: [W, H], uHasOverlay: this.hasOverlay ? 1 : 0 });
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // ---- effects, in order
+    let cur = this.post.a;
+    let moshed = false;
+    for (const fx of f.effects || []) {
+      cur = this.applyEffect(fx, cur, f);
+      if (fx.id === 'datamosh') moshed = true;
+    }
+    if (!moshed) this.moshFresh = true; // start clean next time it's switched on
+
+    // ---- to the canvas
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, W, H);
+    gl.useProgram(this.copy.p);
+    this.texUnit(this.copy, 'uSrc', 0, cur.tex);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     return gx * gy;
