@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GEO_SC</title>
+    <meta name="description" content="Depth-particle visuals for INKRMN. Runs entirely in your browser." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Crect x='3' y='11' width='10' height='2' fill='%23e2231a'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <main id="stage">
+      <canvas id="view" aria-label="Particle view. Drag to orbit, scroll to zoom, click to splash, double-click to reset."></canvas>
+      <p id="status" role="status" hidden></p>
+      <div id="drop" aria-hidden="true"><span>Drop pictures to add them</span></div>
+    </main>
+
+    <aside id="panel">
+      <header class="brand">
+        <h1>GEO<span>_</span>SC</h1>
+        <p id="count">Starting…</p>
+      </header>
+
+      <section class="pictures" aria-label="Pictures">
+        <div class="sec-head">
+          <h2>Pictures</h2>
+          <button type="button" id="add" class="link">Add pictures</button>
+        </div>
+        <div id="slots"></div>
+        <p class="hint">Up to four. Space moves to the next one.</p>
+        <input type="file" id="file" accept="image/*" multiple hidden />
+      </section>
+
+      <div id="controls"></div>
+
+      <footer class="output">
+        <div class="ctl select">
+          <label for="format">Size</label>
+          <select id="format"></select>
+        </div>
+        <div class="ctl select">
+          <label for="duration">Length</label>
+          <select id="duration">
+            <option value="5">5 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="15">15 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="0">Until I stop it</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button type="button" id="record" title="Record video (R)">Record</button>
+          <button type="button" id="still" title="Save a PNG of this frame (P)">Save still</button>
+          <button type="button" id="hide" title="Hide the panel (H)">Hide panel</button>
+        </div>
+        <details class="keys">
+          <summary>Shortcuts</summary>
+          <dl>
+            <dt>Space</dt><dd>Next picture</dd>
+            <dt>S</dt><dd>Scan on or off</dd>
+            <dt>T</dt><dd>Trails on or off</dd>
+            <dt>R</dt><dd>Start or stop recording</dd>
+            <dt>P</dt><dd>Save still</dd>
+            <dt>H</dt><dd>Hide or show the panel</dd>
+            <dt>0</dt><dd>Reset camera</dd>
+            <dt>Drag</dt><dd>Orbit the camera</dd>
+            <dt>Scroll</dt><dd>Zoom</dd>
+            <dt>Double-click</dt><dd>Reset a slider, or the camera</dd>
+          </dl>
+        </details>
+      </footer>
+    </aside>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>
