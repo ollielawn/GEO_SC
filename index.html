@@ -11,6 +11,7 @@
   <body>
     <main id="stage">
       <canvas id="view" aria-label="Particle view. Drag to orbit, scroll to zoom, click to splash, double-click to reset."></canvas>
+      <div id="ring" aria-hidden="true" hidden></div>
       <p id="status" role="status" hidden></p>
       <div id="drop" aria-hidden="true"><span>Drop pictures to add them</span></div>
     </main>
@@ -34,22 +35,9 @@
       <div id="controls"></div>
 
       <footer class="output">
-        <div class="ctl select">
-          <label for="format">Size</label>
-          <select id="format"></select>
-        </div>
-        <div class="ctl select">
-          <label for="duration">Length</label>
-          <select id="duration">
-            <option value="5">5 seconds</option>
-            <option value="10">10 seconds</option>
-            <option value="15">15 seconds</option>
-            <option value="30">30 seconds</option>
-            <option value="0">Until I stop it</option>
-          </select>
-        </div>
         <div class="actions">
-          <button type="button" id="record" title="Record video (R)">Record</button>
+          <button type="button" id="render" title="Render a video frame by frame at full quality">Render</button>
+          <button type="button" id="record" title="Record live, including what you do with the cursor (R)">Record live</button>
           <button type="button" id="still" title="Save a PNG of this frame (P)">Save still</button>
           <button type="button" id="hide" title="Hide the panel (H)">Hide panel</button>
         </div>
@@ -59,9 +47,12 @@
             <dt>Space</dt><dd>Next picture</dd>
             <dt>S</dt><dd>Scan on or off</dd>
             <dt>T</dt><dd>Trails on or off</dd>
-            <dt>R</dt><dd>Start or stop recording</dd>
+            <dt>G</dt><dd>Geometry on or off</dd>
+            <dt>B</dt><dd>Tap tempo</dd>
+            <dt>R</dt><dd>Start or stop live recording</dd>
             <dt>P</dt><dd>Save still</dd>
             <dt>H</dt><dd>Hide or show the panel</dd>
+            <dt>Esc</dt><dd>Stop a render</dd>
             <dt>0</dt><dd>Reset camera</dd>
             <dt>Drag</dt><dd>Orbit the camera</dd>
             <dt>Scroll</dt><dd>Zoom</dd>

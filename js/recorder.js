@@ -23,7 +23,7 @@ export async function probeFormat(canvas) {
       rec.ondataavailable = (e) => (size += e.data.size);
       const done = new Promise((resolve) => (rec.onstop = resolve));
       rec.start(100);
-      await new Promise((r) => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 1000));
       rec.stop();
       await done;
       stream.getTracks().forEach((t) => t.stop());
@@ -32,6 +32,9 @@ export async function probeFormat(canvas) {
       /* try the next one */
     }
   }
+  // Nothing proved itself (often just a slow machine). Fall back to the first
+  // format the browser claims; an empty result is still caught on save.
+  for (const [mime, ext] of CANDIDATES) if (MediaRecorder.isTypeSupported(mime)) return { mime, ext };
   return null;
 }
 

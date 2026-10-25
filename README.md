@@ -43,22 +43,39 @@ After that the project is fully self-contained: it works offline and doesn't dep
 | Pictures | Up to four. Click a thumbnail (or press Space) to morph to it. Drag files onto the window or paste from the clipboard. |
 | Source | Where depth comes from (AI model, brightness or flat), flipping near and far, and removing a plain background. The background colour is sampled from the picture's corners. |
 | Form | Particle count, dot size, how deep the 3D push is, and image size. |
-| Motion | Drift noise, streamers that peel off along the wind, camera sway, and how hard the cursor pushes particles. |
+| Auto motion | Motion that runs by itself, locked to a tempo (type it, or tap it with `B`). One cycle = the bars you pick. **Spin** (turns per cycle), **Tilt**, **Wobble** (a figure-eight per cycle), **Dolly** (zoom in and out per cycle), **Beat pulse** (depth and dot size punch on every beat), **Wave** and **Ripple** (travel one wavelength per bar) and **Twist** (swings once per cycle). |
+| Drift and cursor | Drift noise, streamers that peel off along the wind, cursor push strength and **cursor size** (the ring shows its reach; it never appears in exports). |
 | Scan | A band that sweeps through depth, across or down. Particles at the front flash the accent colour and get kicked; behind it they burn toward ink and recover. |
 | Trails | Leaves fading copies of previous frames. |
+| Geometry | Finds points in the picture (corners, edges, bright spots, dark spots or the nearest areas), joins them (nearest neighbours, a chain or hubs), marks them and labels them with what was actually measured: corner or edge strength (0–1), brightness (0–255), depth (0–1), live screen position or an index. Choose a font or drop in your own `.ttf`/`.otf`/`.woff2`. Points ride along with the particles. **Reveal with scan** makes them appear as the scan passes. |
 | Look | Original, ink, negative or duotone colour; light or dark paper; glow (additive blending); film grain. |
+
+Sections fold up: click a section title.
 
 On the canvas: drag to orbit, scroll to zoom, click to splash, double-click to reset the camera. Double-click any slider to reset it.
 
-Shortcuts: `Space` next picture, `S` scan, `T` trails, `R` record, `P` save still, `H` hide panel, `0` reset camera.
+Shortcuts: `Space` next picture, `S` scan, `T` trails, `G` geometry, `B` tap tempo, `R` live record, `P` save still, `H` hide panel, `Esc` stop a render, `0` reset camera.
 
 ## Exporting
 
-Pick a size (Reel 9:16, Portrait 4:5, Square 1:1 or Wide 16:9) and a length, then press **Record**. The canvas renders at full output resolution whatever size it looks on screen, and the clock restarts when recording starts, so the scan sweep begins with the clip.
+**Render** (the red button) makes the best-quality video. It draws every frame offline, so nothing is dropped however heavy the scene, and encodes H.264 at a high bitrate straight into an MP4. The canvas shows progress as it goes. Needs Chrome, Edge or Safari 17+.
 
-Chrome and Safari record MP4 (H.264), which Instagram accepts directly. Browsers that can only make WebM will say so when the file saves. On load, GEO_SC does a half-second test recording to find a format that really works.
+**Record live** captures in real time with the browser's recorder, including whatever you do with the cursor. It's handy, but softer.
+
+Export settings:
+
+- **Shape**: Reel 9:16, Portrait 4:5, Square 1:1 or Wide 16:9.
+- **Resolution**: 1080p or 4K.
+- **Smoothing**: 2× supersampling draws the particles at double resolution and averages them down, so dots stay crisp without jagged edges. Applies at 1080p.
+- **Frame rate**: 30 or 60.
+- **Quality**: Standard, High or Maximum bitrate. Particle grain is hard to compress, so higher is noticeably cleaner.
+- **Length**: seconds, or 1, 2 or 4 tempo cycles so camera motion ends where it started.
+
+The clock restarts at the start of every export, so a given set of settings always renders the same clip.
 
 **Save still** exports a PNG of the current frame at full resolution.
+
+Instagram re-compresses everything you upload. Starting from a clean, high-bitrate file is still what keeps it sharp after that.
 
 ## How it works
 
@@ -73,7 +90,9 @@ picture ──► depth map ──► particles on the GPU ──► effects ─
 | `js/renderer.js` | WebGL2 setup, textures, the trails buffer, drawing |
 | `js/shaders.js` | The GLSL. Every particle's position and colour is worked out from scratch each frame from its id, the picture, the depth map, the time and the settings. There's no simulation state, which keeps it fast and makes recordings repeatable. |
 | `js/depth.js` | AI, brightness and flat depth |
-| `js/recorder.js` | MediaRecorder video export |
+| `js/geometry.js` | Feature detection (Sobel edges, Harris corners, brightness, depth), linking, labels, and a JS mirror of the shader motion so the overlay tracks the particles |
+| `js/encoder.js` | Offline render: WebCodecs H.264 encoder plus a small MP4 writer |
+| `js/recorder.js` | Live recording with MediaRecorder |
 | `serve.mjs` | A dependency-free local server |
 | `scripts/setup.mjs` | Vendors the AI runtime and model |
 
@@ -83,10 +102,9 @@ Settings are remembered in your browser's local storage.
 
 ## Ideas for next
 
-- Audio reactive: load a track and drive splash, scan and drift from its kick, snare and highs.
-- Tracker overlays (links and marks between moving points).
-- Frame-perfect offline export for heavy scenes that can't hold 60 fps live.
+- Audio reactive: load a track and drive splash, scan and drift from its kick, snare and highs, with the track muxed into the render.
 - Saved looks: named presets you can switch between.
+- Remember custom fonts between visits.
 
 ## Credits
 

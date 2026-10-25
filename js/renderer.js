@@ -37,7 +37,7 @@ export class Renderer {
       alpha: false,
       depth: false,
       premultipliedAlpha: false,
-      preserveDrawingBuffer: false,
+      preserveDrawingBuffer: true, // lets VideoFrame/toBlob read the canvas reliably
       powerPreference: 'high-performance',
     });
     if (!gl) throw new Error('This browser does not support WebGL2. Try a recent Chrome, Edge, Firefox or Safari.');
@@ -52,6 +52,8 @@ export class Renderer {
     this.frameTex = null;
     this.width = 0;
     this.height = 0;
+    this.ss = 1; // supersampling factor for the particle buffer
+    this.overlayTex = null;
     this.needsClear = true;
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
     this.blank = this.makeBlank();
@@ -66,13 +68,18 @@ export class Renderer {
     return { color, depth, aspect: 1, width: 1, height: 1, key: [1, 1, 1] };
   }
 
-  setSize(w, h) {
-    if (w === this.width && h === this.height) return;
+  // w×h is the output size. Particles draw into a buffer ss× larger and are
+  // averaged down on present, which keeps tiny dots sharp but not jagged.
+  setSize(w, h, ss = 1) {
+    ss = Math.max(1, Math.min(ss, Math.floor(this.maxTexture / Math.max(w, h))));
+    if (w === this.width && h === this.height && ss === this.ss) return;
     const gl = this.gl;
     this.canvas.width = w;
     this.canvas.height = h;
     this.width = w;
     this.height = h;
+    this.ss = ss;
+    const fw = w * ss, fh = h * ss;
     if (this.fbo) {
       gl.deleteFramebuffer(this.fbo);
       gl.deleteTexture(this.frameTex);
@@ -80,12 +87,13 @@ export class Renderer {
     this.frameTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.frameTex);
     if (this.floatTargets) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, fw, fh, 0, gl.RGBA, gl.HALF_FLOAT, null);
     } else {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, fw, fh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     }
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    // At exactly 2× a bilinear tap at each output pixel centre averages 2×2 texels.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this.fbo = gl.createFramebuffer();
@@ -123,6 +131,45 @@ export class Renderer {
     return tex;
   }
 
+  // Upload the 2D overlay canvas (geometry, labels). Pass null to clear it.
+  setOverlay(source) {
+    const gl = this.gl;
+    if (!source) {
+      this.hasOverlay = false;
+      return;
+    }
+    if (!this.overlayTex) {
+      this.overlayTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.overlayTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this.overlayTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    this.hasOverlay = true;
+  }
+
+  // Camera matrices for a frame. Shared with the geometry overlay.
+  matrices(f) {
+    const aspect = this.width / this.height;
+    const dist = CAMERA_DISTANCE * f.zoom;
+    const view = multiply(translation(0, 0, -dist), multiply(rotationX(f.pitch), rotationY(f.yaw)));
+    const proj = perspective(FOV, aspect, 0.01, 100);
+    return { view, proj };
+  }
+
+  // Particle grid dimensions for an image.
+  grid(img, density) {
+    const gx = img.aspect >= 1 ? density : Math.max(2, Math.round(density * img.aspect));
+    const gy = img.aspect >= 1 ? Math.max(2, Math.round(density / img.aspect)) : density;
+    return [gx, gy];
+  }
+
   deleteTexture(tex) {
     if (tex && tex !== this.blank.color && tex !== this.blank.depth) this.gl.deleteTexture(tex);
   }
@@ -151,22 +198,19 @@ export class Renderer {
     const B = f.imageB || A;
 
     // Particle grid follows image A's shape.
-    const long = f.density;
-    const gx = A.aspect >= 1 ? long : Math.max(2, Math.round(long * A.aspect));
-    const gy = A.aspect >= 1 ? Math.max(2, Math.round(long / A.aspect)) : long;
+    const [gx, gy] = this.grid(A, f.density);
+    const FW = W * this.ss, FH = H * this.ss;
 
     const planeA = this.plane(A.aspect, aspect, f.scale);
     const planeB = this.plane(B.aspect, aspect, f.scale);
     const spacing = (2 * planeA[1]) / gy;
-    const pxScale = (H / (2 * Math.tan(FOV / 2))) * spacing;
+    const pxScale = (FH / (2 * Math.tan(FOV / 2))) * spacing;
 
-    const dist = CAMERA_DISTANCE * f.zoom;
-    const view = multiply(translation(0, 0, -dist), multiply(rotationX(f.pitch), rotationY(f.yaw)));
-    const proj = perspective(FOV, aspect, 0.01, 100);
+    const { view, proj } = f.view ? f : this.matrices(f);
 
     // ---- draw into the accumulation buffer
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
-    gl.viewport(0, 0, W, H);
+    gl.viewport(0, 0, FW, FH);
     gl.bindVertexArray(this.vao);
     const bg = f.paper;
     if (!f.trails || this.needsClear) {
@@ -221,6 +265,14 @@ export class Renderer {
     u1('uStream', f.stream);
     u1('uWind', f.wind);
     u1('uScatter', f.scatter);
+    u1('uBarPhase', f.barPhase);
+    u1('uCyclePhase', f.cyclePhase);
+    u1('uWave', f.wave);
+    u1('uWaveFreq', f.waveFreq);
+    u1('uWaveAngle', f.waveAngle);
+    u1('uRipple', f.ripple);
+    u1('uRippleFreq', f.rippleFreq);
+    u1('uTwist', f.twist);
     gl.uniform3fv(P.loc('uSplashPos'), f.splashPos);
     u1('uSplash', f.splash);
     u1('uSplashR', f.splashRadius);
@@ -247,6 +299,10 @@ export class Renderer {
     gl.uniform1f(this.present.loc('uGrain'), f.grain);
     gl.uniform1f(this.present.loc('uTime'), f.time);
     gl.uniform2f(this.present.loc('uRes'), W, H);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.hasOverlay ? this.overlayTex : this.blank.color);
+    gl.uniform1i(this.present.loc('uOverlay'), 1);
+    gl.uniform1f(this.present.loc('uHasOverlay'), this.hasOverlay ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     return gx * gy;

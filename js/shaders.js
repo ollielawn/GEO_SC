@@ -11,20 +11,22 @@ uint pcg(uint v) {
 }
 float rnd(uint id, uint salt) { return float(pcg(id ^ (salt * 0x9E3779B9u))) / 4294967295.0; }
 
-float hash3(vec3 p) {
-  p = fract(p * 0.3183099 + 0.1);
-  p *= 17.0;
-  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+// Integer lattice hash: bit-exact in JS too (geometry.js), so the overlay
+// can follow drifting particles precisely.
+float hashCell(ivec3 c) {
+  uint h = pcg((uint(c.x) * 73856093u) ^ (uint(c.y) * 19349663u) ^ (uint(c.z) * 83492791u));
+  return float(h) / 4294967295.0;
 }
 float vnoise(vec3 x) {
-  vec3 i = floor(x);
-  vec3 f = fract(x);
+  vec3 fl = floor(x);
+  ivec3 i = ivec3(fl);
+  vec3 f = x - fl;
   f = f * f * (3.0 - 2.0 * f);
   return mix(
-    mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), f.x),
-        mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), f.x), f.y),
-    mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x),
-        mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y),
+    mix(mix(hashCell(i), hashCell(i + ivec3(1, 0, 0)), f.x),
+        mix(hashCell(i + ivec3(0, 1, 0)), hashCell(i + ivec3(1, 1, 0)), f.x), f.y),
+    mix(mix(hashCell(i + ivec3(0, 0, 1)), hashCell(i + ivec3(1, 0, 1)), f.x),
+        mix(hashCell(i + ivec3(0, 1, 1)), hashCell(i + ivec3(1, 1, 1)), f.x), f.y),
     f.z);
 }
 vec3 noise3(vec3 p) {
@@ -46,6 +48,8 @@ uniform float uTime, uPxScale, uSize, uDepthAmt, uOpacity;
 uniform float uKey;
 uniform float uMorph, uMorphBurst;
 uniform float uDrift, uSpeed, uStream, uWind, uScatter;
+uniform float uBarPhase, uCyclePhase;       // tempo clock, 0..1
+uniform float uWave, uWaveFreq, uWaveAngle, uRipple, uRippleFreq, uTwist;
 uniform vec3 uSplashPos;
 uniform float uSplash, uSplashR;
 uniform float uScanOn, uScanPos, uScanWidth, uScanBurn, uScanJitter, uScanAxis;
@@ -113,6 +117,21 @@ void main() {
     col = 1.0 - col;
   } else if (uColorMode == 3) {
     col = mix(uInk, uAccent, smoothstep(0.1, 0.9, lum));
+  }
+
+  // Auto motion (tempo-synced). Mirrored in geometry.js so the overlay tracks it.
+  if (uTwist > 0.0) {
+    float a = uTwist * p.y * 1.5 * sin(6.2831853 * uCyclePhase);
+    float cs = cos(a), sn = sin(a);
+    p.xz = mat2(cs, -sn, sn, cs) * p.xz;
+  }
+  if (uWave > 0.0) {
+    vec2 dir = vec2(cos(uWaveAngle), sin(uWaveAngle));
+    p.z += sin(dot(p.xy, dir) * uWaveFreq * 3.14159265 - 6.2831853 * uBarPhase) * uWave * 0.25;
+  }
+  if (uRipple > 0.0) {
+    float rr = length(p.xy);
+    p.z += sin(rr * uRippleFreq * 6.2831853 - 6.2831853 * uBarPhase) * uRipple * 0.2 * exp(-rr * 0.6);
   }
 
   // Drift: slow 3D noise. Far particles wander more than near ones.
@@ -207,8 +226,8 @@ void main() { outColor = uFade; }
 export const PRESENT_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
-uniform sampler2D uFrame;
-uniform float uGrain, uTime;
+uniform sampler2D uFrame, uOverlay;
+uniform float uGrain, uTime, uHasOverlay;
 uniform vec2 uRes;
 in vec2 vUv;
 out vec4 outColor;
@@ -219,6 +238,10 @@ void main() {
     uvec2 px = uvec2(vUv * uRes);
     uint seed = px.x * 1973u + px.y * 9277u + uint(uTime * 60.0) * 26699u;
     c += (rnd(seed, 7u) - 0.5) * uGrain;
+  }
+  if (uHasOverlay > 0.5) {
+    vec4 o = texture(uOverlay, vec2(vUv.x, 1.0 - vUv.y)); // premultiplied, canvas is top-down
+    c = c * (1.0 - o.a) + o.rgb;
   }
   outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
