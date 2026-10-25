@@ -424,3 +424,61 @@ body.rendering .sec-body, body.rendering .pictures { pointer-events: none; opaci
 .subhead-wrap.on .ctl.subhead label { color: var(--ink); }
 .subhead-wrap:not(.on) .ctl.subhead label { color: var(--muted); font-weight: 600; }
 .subhead-wrap .note { margin: 4px 0 0; }
+
+/* ---------------------------------------------------------------- presets */
+
+.preset-save { display: grid; grid-template-columns: 1fr auto; gap: 6px; padding: 2px 0 8px; }
+.preset-save input {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 12px var(--font);
+}
+.preset-save .ctl-button { width: auto; padding: 6px 14px; font-weight: 700; }
+.preset-list { list-style: none; margin: 0 0 6px; padding: 0; }
+.preset-row { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--rule); }
+.preset-row:first-child { border-top: 0; }
+.preset-group { padding: 10px 0 4px; color: var(--muted); font-size: 11px; }
+.preset-name {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: 12px var(--font);
+  text-align: left;
+  cursor: pointer;
+}
+.preset-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preset-name:hover span:last-child { text-decoration: underline; text-underline-offset: 2px; }
+.preset-name[aria-pressed='true'] { font-weight: 800; }
+.preset-name[aria-pressed='true'] .preset-key { background: var(--red); color: #fff; border-color: var(--red); }
+.preset-key {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--rule);
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.preset-key:empty { visibility: hidden; }
+.preset-del {
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 13px var(--font);
+  cursor: pointer;
+}
+.preset-del:hover { color: var(--red); }
+.preset-files { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-top: 6px; }

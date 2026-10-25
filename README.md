@@ -40,6 +40,7 @@ After that the project is fully self-contained: it works offline and doesn't dep
 
 | Area | What it does |
 | --- | --- |
+| Presets | Save the current look under a name: background, effects, motion, geometry, colours and camera angle. Export settings and pictures aren't included. Click a preset, or press `1`–`9`, to recall it. **Switching** sets how presets change: a cut, or a blend over 1 beat, 1 bar or 2 bars at your tempo. Seven starter looks are included. |
 | Pictures | Up to four. Click a thumbnail (or press Space) to morph to it. Drag files onto the window or paste from the clipboard. |
 | Source | Where depth comes from (AI model, brightness or flat), flipping near and far, and removing a plain background. The background colour is sampled from the picture's corners. |
 | Form | Particle count, dot size, how deep the 3D push is, and image size. |
@@ -56,7 +57,11 @@ Sections fold up: click a section title.
 
 On the canvas: drag to orbit, scroll to zoom, click to splash, double-click to reset the camera. Double-click any slider to reset it.
 
-Shortcuts: `Space` next picture, `S` scan, `T` trails, `G` geometry, `B` tap tempo, `R` live record, `P` save still, `H` hide panel, `Esc` stop a render, `0` reset camera.
+Shortcuts: `1`–`9` apply a preset, `Space` next picture, `S` scan, `T` trails, `G` geometry, `B` tap tempo, `R` live record, `P` save still, `H` hide panel, `Esc` stop a render, `0` reset camera.
+
+## Where presets are kept
+
+Saved presets always go into your browser. When the app is running with `npm start`, they're also written to `presets/user.json` in the project folder: commit that file and your presets travel with the code, including to GitHub Pages. **Export presets** and **Import presets** move them between machines as a `.json` file.
 
 ## Exporting
 
@@ -97,7 +102,8 @@ picture ──► depth map ──► background + particles (trails buffer) ─
 | `js/geometry.js` | Feature detection (Sobel edges, Harris corners, brightness, depth), linking, labels, and a JS mirror of the shader motion so the overlay tracks the particles |
 | `js/encoder.js` | Offline render: WebCodecs H.264 encoder plus a small MP4 writer |
 | `js/recorder.js` | Live recording with MediaRecorder |
-| `serve.mjs` | A dependency-free local server |
+| `js/presets.js` | Preset storage (browser + `presets/user.json`) and the starter looks |
+| `serve.mjs` | A dependency-free local server that also saves presets into the project |
 | `scripts/setup.mjs` | Vendors the AI runtime and model |
 
 There are no front-end libraries. The renderer is plain WebGL2, so the only third-party code is the optional ONNX runtime for AI depth.
@@ -107,7 +113,6 @@ Settings are remembered in your browser's local storage.
 ## Ideas for next
 
 - Audio reactive: load a track and drive splash, scan and drift from its kick, snare and highs, with the track muxed into the render.
-- Saved looks: named presets you can switch between.
 - Remember custom fonts between visits.
 
 ## Credits

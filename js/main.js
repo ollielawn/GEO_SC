@@ -5,6 +5,7 @@ import { encodeVideo, findEncoder } from './encoder.js';
 import { analyse, pickPoints, buildLinks, GeometryLayer, FONTS } from './geometry.js';
 import { BACKGROUNDS } from './backgrounds.js';
 import { EFFECTS, PALETTES, CHARSETS } from './effects.js';
+import { PresetStore, STARTERS, NOT_IN_PRESETS, clean } from './presets.js';
 
 // ---------------------------------------------------------------- settings
 
@@ -96,6 +97,7 @@ const DEFAULTS = {
   fps: '60',
   quality: 'high',
   duration: 10,
+  presetBlend: '4',
 };
 
 // Settings for every background and effect come from their descriptions.
@@ -136,6 +138,11 @@ const S = loadSettings();
 // ---------------------------------------------------------------- control panel
 
 const SECTIONS = [
+  {
+    id: 'presets',
+    title: 'Presets',
+    controls: [{ type: 'presets' }],
+  },
   {
     id: 'source',
     title: 'Source',
@@ -287,6 +294,7 @@ const SECTIONS = [
 ];
 
 const controlsEl = document.getElementById('controls');
+const presetUI = {}; // filled when the Presets section is built
 const refreshers = [];
 const buttons = {};
 
@@ -309,6 +317,7 @@ function el(tag, attrs = {}, ...children) {
 
 function set(key, value) {
   S[key] = value;
+  if (!NOT_IN_PRESETS.has(key)) markEdited();
   saveSettings();
   onChange(key);
   refreshers.forEach((r) => r());
@@ -322,6 +331,7 @@ function buildControl(c) {
 
 function buildControlInner(c) {
   const id = `c-${c.key || c.id}`;
+  if (c.type === 'presets') return buildPresetsUI();
   if (c.type === 'subhead') {
     const b = el('button', { type: 'button', role: 'switch', id, class: 'switch', 'aria-label': `${c.label} on`, onclick: () => set(c.key, !S[c.key]) });
     const row = el('div', { class: 'ctl subhead' }, el('label', { for: id, title: c.note || '' }, c.label), b);
@@ -753,6 +763,218 @@ function onChange(key) {
   if (key === 'trails' || key === 'bg' || key.startsWith('bg_')) renderer.needsClear = true;
 }
 
+// ---------------------------------------------------------------- presets
+
+const presets = new PresetStore(DEFAULTS);
+let activePreset = null; // { name, edited }
+let blend = null; // in-progress blend between looks
+
+// Settings that change what's measured or how time flows switch instantly.
+const NO_BLEND = new Set(['bpm', 'bars', 'geoCount', 'geoSpacing', 'geoK', 'geoMaxLen', 'geoDecimals', 'key']);
+
+function snapshot() {
+  const settings = {};
+  for (const k of Object.keys(DEFAULTS)) if (!NOT_IN_PRESETS.has(k)) settings[k] = S[k];
+  return { settings, camera: { ty: cam.ty, tp: cam.tp, tz: cam.tz } };
+}
+
+function allPresets() {
+  return [...presets.items.map((p) => ({ ...p, user: true })), ...STARTERS.map((p) => ({ ...p, user: false }))];
+}
+
+const isHex = (v) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
+function mixHex(a, b, t) {
+  const A = hexToRgb(a), B = hexToRgb(b);
+  return '#' + A.map((v, i) => Math.round((v + (B[i] - v) * t) * 255).toString(16).padStart(2, '0')).join('');
+}
+
+function applyPreset(p, { instant = false } = {}) {
+  // A preset is complete: anything it doesn't mention goes back to default.
+  const targetS = {};
+  for (const k of Object.keys(DEFAULTS)) if (!NOT_IN_PRESETS.has(k)) targetS[k] = DEFAULTS[k];
+  Object.assign(targetS, clean(p.settings, DEFAULTS));
+
+  const beats = Number(S.presetBlend);
+  const seconds = instant || rendering ? 0 : beats * tempo().beat;
+  const from = {};
+  const to = {};
+  const prevBg = S.bg;
+  const prevFlip = S.flipDepth;
+  for (const [k, v] of Object.entries(targetS)) {
+    const cur = S[k];
+    const blendable = seconds > 0 && !NO_BLEND.has(k) && ((typeof v === 'number' && typeof cur === 'number') || (isHex(v) && isHex(cur)));
+    if (blendable && v !== cur) {
+      from[k] = cur;
+      to[k] = v;
+    } else {
+      S[k] = v;
+    }
+  }
+  blend = Object.keys(to).length ? { from, to, t: 0, dur: seconds } : null;
+  if (p.camera) Object.assign(cam, { ty: p.camera.ty ?? 0, tp: p.camera.tp ?? 0, tz: p.camera.tz ?? 1 });
+  if (S.geoFont === 'custom' && !customFont) S.geoFont = 'mono';
+  if (S.bg !== prevBg) renderer.needsClear = true;
+  if (S.flipDepth !== prevFlip) rebuildDepth();
+  activePreset = { name: p.name, edited: false };
+  saveSettings();
+  refreshers.forEach((r) => r());
+  renderPresetList();
+  status(`Preset: ${p.name}`, 1500);
+}
+
+function stepPresetBlend(dt) {
+  if (!blend) return;
+  blend.t = Math.min(1, blend.t + dt / blend.dur);
+  const e = blend.t * blend.t * (3 - 2 * blend.t);
+  for (const k of Object.keys(blend.to)) {
+    const a = blend.from[k], b = blend.to[k];
+    S[k] = typeof b === 'number' ? a + (b - a) * e : mixHex(a, b, e);
+  }
+  if (blend.t >= 1) {
+    for (const k of Object.keys(blend.to)) S[k] = blend.to[k];
+    blend = null;
+    saveSettings();
+    refreshers.forEach((r) => r());
+  }
+}
+
+function markEdited() {
+  if (activePreset && !activePreset.edited) {
+    activePreset.edited = true;
+    renderPresetList();
+  }
+}
+
+function storageNote(state) {
+  if (!presetUI.note) return;
+  presetUI.note.textContent =
+    state === 'project'
+      ? 'Saved to presets/user.json in the project folder. Commit it to keep your presets with the code.'
+      : 'Saved in this browser. Run the app with "npm start" to save presets into the project folder, or export them.';
+}
+
+async function savePreset(name) {
+  name = name.trim();
+  if (!name) {
+    status('Give the preset a name first.', 2500);
+    presetUI.input.focus();
+    return;
+  }
+  if (STARTERS.some((p) => p.name === name)) {
+    status('That name belongs to a starter preset. Pick another.', 3000);
+    return;
+  }
+  const snap = snapshot();
+  const state = await presets.save(name, snap.settings, snap.camera);
+  activePreset = { name, edited: false };
+  presetUI.input.value = '';
+  storageNote(state);
+  renderPresetList();
+  status(`Saved preset: ${name}`, 2000);
+}
+
+function buildPresetsUI() {
+  const wrap = el('div', { class: 'presets' });
+  const input = el('input', { type: 'text', id: 'preset-name', placeholder: 'Name this look', maxlength: '40', 'aria-label': 'Preset name' });
+  const saveBtn = el('button', { type: 'button', class: 'ctl-button' }, 'Save');
+  saveBtn.addEventListener('click', () => savePreset(input.value));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') savePreset(input.value);
+  });
+  const list = el('ol', { class: 'preset-list' });
+  const blendRow = buildControlInner({
+    key: 'presetBlend',
+    type: 'seg',
+    label: 'Switching',
+    options: [['0', 'Cut'], ['1', '1 beat'], ['4', '1 bar'], ['8', '2 bars']],
+  });
+  const fileIn = el('input', { type: 'file', accept: '.json,application/json', hidden: '' });
+  const exportBtn = el('button', { type: 'button', class: 'ctl-button' }, 'Export presets');
+  const importBtn = el('button', { type: 'button', class: 'ctl-button' }, 'Import presets');
+  exportBtn.addEventListener('click', () => {
+    if (!presets.items.length) return status('Save a preset first.', 2500);
+    download(new Blob([presets.toJSON()], { type: 'application/json' }), `geo_sc-presets-${stamp()}.json`);
+  });
+  importBtn.addEventListener('click', () => fileIn.click());
+  fileIn.addEventListener('change', async () => {
+    const f = fileIn.files[0];
+    fileIn.value = '';
+    if (!f) return;
+    try {
+      const n = presets.importJSON(await f.text());
+      storageNote(presets.fileState);
+      renderPresetList();
+      status(`Imported ${n} preset${n === 1 ? '' : 's'}`, 2500);
+    } catch (err) {
+      status(`Couldn't import: ${err.message}`, 4000);
+    }
+  });
+  const note = el('p', { class: 'note' });
+  Object.assign(presetUI, { input, list, note });
+  storageNote('browser');
+  wrap.append(
+    el('div', { class: 'preset-save' }, input, saveBtn),
+    list,
+    blendRow,
+    el('div', { class: 'preset-files' }, exportBtn, importBtn),
+    fileIn,
+    note,
+  );
+  return wrap;
+}
+
+function renderPresetList() {
+  const list = presetUI.list;
+  if (!list) return;
+  list.replaceChildren();
+  const items = allPresets();
+  let shownStarters = false;
+  items.forEach((p, i) => {
+    if (!p.user && !shownStarters) {
+      shownStarters = true;
+      list.append(el('li', { class: 'preset-group' }, presets.items.length ? 'Starters' : 'Starters (save your own above)'));
+    }
+    const active = activePreset?.name === p.name;
+    const key = i < 9 ? String(i + 1) : '';
+    const name = el(
+      'button',
+      { type: 'button', class: 'preset-name', 'aria-pressed': String(active), title: key ? `Apply (key ${key})` : 'Apply' },
+      el('span', { class: 'preset-key' }, key),
+      el('span', {}, p.name + (active && activePreset.edited ? ' (edited)' : '')),
+    );
+    name.addEventListener('click', () => applyPreset(p));
+    const row = el('li', { class: 'preset-row' }, name);
+    if (p.user) {
+      const upd = el('button', { type: 'button', class: 'link', title: 'Overwrite with the current look' }, 'Update');
+      upd.addEventListener('click', async () => {
+        const snap = snapshot();
+        storageNote(await presets.save(p.name, snap.settings, snap.camera));
+        activePreset = { name: p.name, edited: false };
+        renderPresetList();
+        status(`Updated ${p.name}`, 2000);
+      });
+      const del = el('button', { type: 'button', class: 'preset-del', 'aria-label': `Delete ${p.name}`, title: 'Delete' }, '×');
+      let armed = false;
+      del.addEventListener('click', async () => {
+        if (!armed) {
+          armed = true;
+          del.textContent = 'Delete?';
+          setTimeout(() => {
+            armed = false;
+            del.textContent = '×';
+          }, 2500);
+          return;
+        }
+        storageNote(await presets.remove(p.name));
+        if (activePreset?.name === p.name) activePreset = null;
+        renderPresetList();
+      });
+      row.append(upd, del);
+    }
+    list.append(row);
+  });
+}
+
 // ---------------------------------------------------------------- tempo
 
 function tempo() {
@@ -829,7 +1051,7 @@ function updateRing(zoom) {
 
 // ---------------------------------------------------------------- frame state
 
-const clock = { time: 0, scan: 0, last: performance.now() };
+const clock = { time: 0, scan: 0, spin: 0, last: performance.now() };
 const MORPH_SECONDS = 1.8;
 const fract = (x) => x - Math.floor(x);
 let lastKeyIdx = -1;
@@ -890,6 +1112,8 @@ let lastCount = 0;
 
 function step(dt) {
   clock.time += dt;
+  clock.spin += (dt / tempo().cycle) * TAU * S.spin; // accumulated, so changing speed never jumps
+  stepPresetBlend(dt);
   clock.scan += dt * S.scanSpeed * 0.25;
   const ease = 1 - Math.exp(-dt * 8);
   cam.yaw += (cam.ty - cam.yaw) * ease;
@@ -917,7 +1141,7 @@ function frameParams() {
   const beatPhase = fract(beats);
   const env = Math.exp(-beatPhase * 5);
 
-  const yaw = cam.yaw + TAU * S.spin * cycles + Math.sin(TAU * cyclePhase) * 0.3 * S.sway;
+  const yaw = cam.yaw + clock.spin + Math.sin(TAU * cyclePhase) * 0.3 * S.sway;
   const pitch = cam.pitch + (S.tilt * Math.PI) / 180 + Math.sin(2 * TAU * cyclePhase) * 0.12 * S.sway;
   const zoom = cam.zoom * (1 + S.dolly * 0.35 * Math.sin(TAU * cyclePhase));
 
@@ -1108,6 +1332,7 @@ async function renderVideo() {
   document.body.classList.add('rendering');
   clock.time = 0;
   clock.scan = 0;
+  clock.spin = 0;
   pointer.burst = 0;
   renderer.needsClear = true;
   renderer.moshFresh = true;
@@ -1190,6 +1415,7 @@ async function toggleRecord() {
   try {
     clock.time = 0;
     clock.scan = 0;
+    clock.spin = 0;
     const fps = Number(S.fps);
     recorder.start(recFormat, { fps, bitrate: Math.min(100e6, renderer.width * renderer.height * fps * 0.2) });
     recStart = performance.now();
@@ -1244,6 +1470,10 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'p') wantStill = true;
   else if (k === 'h') toggleClean();
   else if (k === '0') Object.assign(cam, { ty: 0, tp: 0, tz: 1 });
+  else if (/^[1-9]$/.test(k)) {
+    const p = allPresets()[Number(k) - 1];
+    if (p) applyPreset(p);
+  }
 });
 
 // ---------------------------------------------------------------- loop
@@ -1284,6 +1514,8 @@ function frame(now) {
   if (S.depthMode === 'ai' && !aiState.ok) S.depthMode = 'luma';
   if (S.geoFont === 'custom') S.geoFont = 'mono'; // font files aren't kept between visits
   refreshers.forEach((r) => r());
+  await presets.load();
+  renderPresetList();
   await addImage(sampleImage(), 'INKR.MN sample');
   requestAnimationFrame(frame);
   checkRender();
@@ -1291,4 +1523,4 @@ function frame(now) {
 })();
 
 // Exposed for debugging in the console.
-window.geo = { S, slots, renderer, set, render: renderVideo };
+window.geo = { S, slots, renderer, set, render: renderVideo, presets, applyPreset };

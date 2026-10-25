@@ -3,7 +3,7 @@
 // several CPU threads. Usage: node serve.mjs [port]
 
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +30,27 @@ createServer(async (req, res) => {
     'Cross-Origin-Resource-Policy': 'same-origin',
     'Cache-Control': 'no-cache',
   };
+  // Presets saved from the app land in presets/user.json so they can be committed.
+  if (req.method === 'PUT' && new URL(req.url, 'http://x').pathname === '/presets/user.json') {
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 4_000_000) req.destroy();
+    });
+    req.on('end', async () => {
+      try {
+        JSON.parse(body);
+        await mkdir(join(root, 'presets'), { recursive: true });
+        await writeFile(join(root, 'presets', 'user.json'), body);
+        res.writeHead(204, headers);
+      } catch {
+        res.writeHead(400, headers);
+      }
+      res.end();
+    });
+    return;
+  }
   try {
     let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (path.endsWith('/')) path += 'index.html';
