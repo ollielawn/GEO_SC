@@ -15,13 +15,20 @@ const FILE_URL = new URL('../presets/user.json', import.meta.url).href;
 // Starter looks. Each lists only what differs from the defaults.
 export const STARTERS = [
   {
-    name: 'Thermal receipt',
-    settings: { bg: 'receipt', colorMode: 'ink', ink: '#1c1c1c', scanAxis: 'down', scanSpeed: 0.35, stream: 0.03, grain: 0.03, sway: 0.15 },
+    name: 'Super 8 home movie',
+    settings: {
+      bg: 'super8', fx_film_on: true, fx_film_stock: '2', fx_film_grain: 0.7, fx_film_halation: 0.5, fx_film_weave: 0.6,
+      sway: 0.4, drift: 0.3, stream: 0.08,
+    },
+  },
+  {
+    name: 'Macro tube',
+    settings: { bg: 'plain', bg_plain_c1: '#050505', fx_phosphor_on: true, fx_phosphor_cell: 16, fx_phosphor_bloom: 0.7, scan: true, scanAxis: 'across', spin: 0.25 },
   },
   {
     name: 'Tape loop',
     settings: {
-      bg: 'vhs', fx_vhs_on: true, fx_datamosh_on: true, fx_datamosh_mosh: 0.85, fx_datamosh_keys: '4', fx_rgb_on: true, fx_rgb_shift: 4,
+      bg: 'vhs', fx_vhs_on: true, fx_vhs_osd: '1', fx_datamosh_on: true, fx_datamosh_mosh: 0.85, fx_datamosh_keys: '4', fx_rgb_on: true, fx_rgb_shift: 4,
       sway: 0.5, pulse: 0.4, accent: '#ff3b6b',
     },
     camera: { ty: 0.25, tp: -0.1, tz: 1 },

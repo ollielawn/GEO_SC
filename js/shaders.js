@@ -82,7 +82,112 @@ vec3 crtMask(vec2 q, float size, int type) {
 }
 `;
 
-export const GLSL_COMMON = COMMON + NOISE2;
+// Film emulation shared by the film backgrounds and the Film stock effect.
+// Grain follows the Boolean model: overlapping random grains (discs) rather
+// than smooth noise, re-drawn every film frame, strongest in the midtones.
+const FILM = /* glsl */ `
+float grainDiscs(vec2 q, float r, float inner, uint seed) {
+  float cs = r * 1.7;
+  ivec2 c = ivec2(floor(q / cs));
+  float cov = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    ivec2 cc = c + ivec2(i, j);
+    vec2 ctr = (vec2(cc) + vec2(h2(cc, seed), h2(cc, seed + 1u))) * cs;
+    float rad = r * (0.55 + 0.9 * h2(cc, seed + 2u));
+    cov = max(cov, smoothstep(rad, rad * inner, length(q - ctr)));
+  }
+  return cov;
+}
+// Zero-mean, unit-ish grain. soft: 0 = crisp silver grains, 1 = soft colour dye clouds.
+float filmGrain(vec2 q, float size, float soft, uint seed) {
+  float inner = mix(0.75, 0.35, soft);
+  float mean = mix(0.683, 0.468, soft), sd = mix(0.430, 0.398, soft);
+  float fine = (grainDiscs(q, 0.55 * size, inner, seed) - mean) / sd;
+  float clump = (grainDiscs(q, 1.5 * size, inner, seed + 17u) - mean) / sd;
+  return fine * 0.75 + clump * 0.45;
+}
+
+struct Film {
+  float grain, size, soft, colourGrain, mottle, flicker, dust, scratch, vignette, leaks, gate, fps, mono, weave;
+};
+
+float filmFrame(float t, Film f) { return floor(t * f.fps); }
+
+// Gate weave: the frame drifts a little each film frame (1080p px).
+vec2 filmWeave(float frame, Film f) {
+  return (vec2(vn2(vec2(frame * 0.21, 3.0), 130u), vn2(vec2(frame * 0.17, 9.0), 131u)) - 0.5) * vec2(3.0, 6.0) * f.weave;
+}
+
+vec3 filmLook(vec3 c, vec2 q, vec2 uv, vec2 res, float unit, float t, Film f) {
+  vec2 qr = res / unit; // frame size in 1080p units
+  float frame = filmFrame(t, f);
+  uint fs = uint(frame);
+  vec2 gq = q + vec2(h1(frame, 61u), h1(frame, 62u)) * 997.0;     // fresh grain every frame
+  float l = clamp(lum(c), 0.0, 1.0);
+  float w = 0.3 + 2.8 * l * (1.0 - l);                             // midtones grainiest
+  if (f.mono > 0.5) {
+    c += filmGrain(gq, f.size, f.soft, 70u) * f.grain * 0.085 * w;
+  } else {
+    // Three dye layers (blue has the coarsest grain); their average is the luma grain.
+    vec3 gc = vec3(filmGrain(gq, f.size * 0.9, f.soft, 80u), filmGrain(gq, f.size, f.soft, 90u), filmGrain(gq, f.size * 1.35, f.soft, 100u));
+    float gl = (gc.r + gc.g + gc.b) * 0.577;
+    c += mix(vec3(gl), gc, f.colourGrain) * f.grain * 0.085 * w;
+  }
+  // Uneven density across the frame, shifting slowly.
+  c *= 1.0 + f.mottle * 0.07 * (fbm2(uv * vec2(2.5, 3.5) + frame * 0.011, 120u) - 0.5);
+  // Exposure flicker, frame to frame.
+  c *= 1.0 + f.flicker * 0.09 * (h1(frame, 121u) * 2.0 - 1.0) + f.flicker * 0.05 * (vn2(vec2(frame * 0.3, 1.0), 122u) - 0.5);
+  // Dust: irregular dark specks for a single frame, the odd hair.
+  vec2 dc = floor(q / 38.0);
+  float dh = h2(ivec2(dc), fs + 140u);
+  if (dh < f.dust * 0.035) {
+    vec2 dctr = (dc + vec2(h2(ivec2(dc), fs + 141u), h2(ivec2(dc), fs + 142u))) * 38.0;
+    float dr = 1.2 + 4.0 * h2(ivec2(dc), fs + 143u);
+    float blob = smoothstep(dr, dr * 0.4, length((q - dctr) * vec2(1.0, 0.7 + 0.6 * h2(ivec2(dc), fs + 144u))) + (vn2(q * 0.6, fs) - 0.5) * dr);
+    c *= 1.0 - 0.75 * blob;
+  }
+  float hairWin = floor(frame / 5.0);
+  if (h1(hairWin, 150u) < f.dust * 0.5) {
+    vec2 hc = vec2(h1(hairWin, 151u), h1(hairWin, 152u)) * qr;
+    vec2 d = q - hc;
+    float ang = h1(hairWin, 153u) * 6.2831853;
+    vec2 a = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * d;
+    float curve = a.y - sin(a.x * 0.03 + h1(hairWin, 154u) * 6.0) * 18.0;
+    float hair = smoothstep(1.3, 0.2, abs(curve)) * smoothstep(160.0, 60.0, abs(a.x));
+    c *= 1.0 - 0.7 * hair;
+  }
+  // Long scratches that wander slowly and come and go.
+  for (int k = 0; k < 3; k++) {
+    float kk = float(k);
+    if (h1(floor(t * 0.4 + kk * 0.37) + kk * 13.0, 160u) < f.scratch) {
+      float sx = h1(kk, 161u) + (vn2(vec2(t * 0.25, kk * 7.0), 162u) - 0.5) * 0.06 + (h1(frame, 163u + uint(k)) - 0.5) * 0.002;
+      float dx = abs(uv.x - sx) * qr.x;
+      float on = smoothstep(0.25, 0.55, vn2(vec2(kk * 5.0, q.y * 0.004 + frame * 0.02), 164u));
+      c = mix(c, c * 0.55 + 0.4, smoothstep(1.2, 0.0, dx) * on * 0.6);
+    }
+  }
+  // Light leaks: warm glow bleeding in from an edge.
+  if (f.leaks > 0.0) {
+    float side = vn2(vec2(t * 0.15, 2.0), 170u);
+    float e = mix(uv.x, 1.0 - uv.x, step(0.5, side));
+    float leak = smoothstep(0.45, 0.0, e) * smoothstep(0.35, 0.75, fbm2(vec2(uv.y * 2.0, t * 0.35), 171u));
+    c += f.leaks * leak * vec3(1.0, 0.42, 0.12) * (0.6 + 0.4 * h1(frame, 172u));
+  }
+  // Lens fall-off.
+  vec2 v = uv - 0.5;
+  c *= 1.0 - f.vignette * dot(v * vec2(res.x / res.y, 1.0), v * vec2(res.x / res.y, 1.0)) * 1.6;
+  // Camera gate: soft dark border with rounded corners.
+  if (f.gate > 0.0) {
+    vec2 a = abs(uv - 0.5) * 2.0;
+    float m = 0.06 * f.gate;
+    float r = length(max(a - (1.0 - m * 3.0), 0.0)) / (m * 3.0);
+    c *= smoothstep(1.0, 0.75, r) * smoothstep(1.0, 1.0 - m, max(a.x, a.y));
+  }
+  return c;
+}
+`;
+
+export const GLSL_COMMON = COMMON + NOISE2 + FILM;
 
 export const COPY_FRAG = /* glsl */ `#version 300 es
 precision highp float;

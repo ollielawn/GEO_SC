@@ -110,11 +110,18 @@ for (const fx of EFFECTS) {
   for (const p of fx.params) DEFAULTS[fxKey(fx.id, p.id)] = p.def;
 }
 
+// Backgrounds that have been retired fall back to something sensible.
+function validBg(id) {
+  if (BACKGROUNDS.some((b) => b.id === id)) return id;
+  return id === 'film' ? 'film35' : 'plain';
+}
+
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     const out = { ...DEFAULTS };
     for (const k of Object.keys(DEFAULTS)) if (k in saved && typeof saved[k] === typeof DEFAULTS[k]) out[k] = saved[k];
+    out.bg = validBg(out.bg);
     return out;
   } catch {
     return { ...DEFAULTS };
@@ -452,6 +459,7 @@ try {
   throw err;
 }
 const recorder = new Recorder(canvas);
+renderer.onEffectError = (id) => status(`The ${EFFECTS.find((e) => e.id === id)?.label || id} effect couldn't start on this graphics card, so it's been skipped.`, 8000);
 const geoLayer = new GeometryLayer();
 
 let statusTimer = 0;
@@ -793,6 +801,7 @@ function applyPreset(p, { instant = false } = {}) {
   const targetS = {};
   for (const k of Object.keys(DEFAULTS)) if (!NOT_IN_PRESETS.has(k)) targetS[k] = DEFAULTS[k];
   Object.assign(targetS, clean(p.settings, DEFAULTS));
+  targetS.bg = validBg(targetS.bg);
 
   const beats = Number(S.presetBlend);
   const seconds = instant || rendering ? 0 : beats * tempo().beat;
@@ -1066,7 +1075,7 @@ function isDark(hex) {
 
 function bgParams() {
   const def = BACKGROUNDS.find((b) => b.id === S.bg) || BACKGROUNDS[0];
-  const p = new Float32Array(8);
+  const p = new Float32Array(12);
   let i = 0;
   const out = { type: def.type, p, c1: hexToRgb(bgBase()), c2: [0, 0, 0] };
   for (const prm of def.params) {
@@ -1081,7 +1090,7 @@ function effectParams(beats) {
   const list = [];
   for (const def of EFFECTS) {
     if (!S[fxKey(def.id, 'on')]) continue;
-    const p = new Float32Array(8);
+    const p = new Float32Array(12);
     let i = 0;
     const fx = { id: def.id, amount: S[fxKey(def.id, 'amount')], p, c1: [0, 0, 0], c2: [1, 1, 1] };
     for (const prm of def.params) {
@@ -1262,9 +1271,70 @@ function drawGeometry(f) {
   return geoLayer.draw(sets, f, W, H);
 }
 
+// ---------------------------------------------------------------- VHS on-screen display
+
+const osdStart = new Date();
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+function osdMode() {
+  const fx = S.fx_vhs_on ? Number(S.fx_vhs_osd) : 0;
+  const bg = S.bg === 'vhs' ? Number(S.bg_vhs_osd) : 0;
+  return Math.max(fx, bg);
+}
+
+function drawOSD(ctx, W, H, mode, t) {
+  const u = Math.min(W, H) / 1080;
+  const size = Math.round(44 * u);
+  const pad = Math.round(72 * u);
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.font = `bold ${size}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
+  ctx.textBaseline = 'top';
+  const text = (str, x, y, align = 'left', color = '#f4f4f0') => {
+    ctx.textAlign = align;
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 7 * u;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.strokeText(str, x, y);
+    ctx.fillStyle = color;
+    ctx.fillText(str, x, y);
+  };
+  const p2 = (n) => String(n).padStart(2, '0');
+  if (mode === 1) {
+    text('PLAY ▶', pad, pad);
+    text('SP', pad, pad + size * 1.25);
+    const s = Math.floor(t);
+    text(`${Math.floor(s / 3600)}:${p2(Math.floor(s / 60) % 60)}:${p2(s % 60)}`, W - pad, pad, 'right');
+  } else {
+    if (Math.floor(t * 1.5) % 2 === 0) {
+      ctx.fillStyle = '#e8231a';
+      ctx.beginPath();
+      ctx.arc(pad + size * 0.4, pad + size * 0.5, size * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    text('REC', pad + size * 1.0, pad);
+    const d = new Date(osdStart.getTime() + t * 1000);
+    let h = d.getHours();
+    const ap = h < 12 ? 'AM' : 'PM';
+    h = h % 12 || 12;
+    text(`${ap} ${h}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`, pad, H - pad - size * 2.3);
+    text(`${MONTHS[d.getMonth()]}. ${d.getDate()} ${d.getFullYear()}`, pad, H - pad - size);
+  }
+  ctx.restore();
+}
+
+function drawOverlay(f) {
+  const geoCanvas = drawGeometry(f);
+  const osd = osdMode();
+  if (!osd) return geoCanvas;
+  const canvas = geoCanvas || geoLayer.clear(renderer.width, renderer.height);
+  drawOSD(geoLayer.ctx, renderer.width, renderer.height, osd, f.time);
+  return canvas;
+}
+
 function drawFrame() {
   const f = frameParams();
-  renderer.setOverlay(drawGeometry(f));
+  renderer.setOverlay(drawOverlay(f));
   lastCount = renderer.render(f);
   return f;
 }
@@ -1443,6 +1513,25 @@ refreshers.push(updateButtons);
 recordBtn.addEventListener('click', toggleRecord);
 stillBtn.addEventListener('click', () => (wantStill = true));
 document.getElementById('hide').addEventListener('click', toggleClean);
+document.getElementById('save-preset').addEventListener('click', quickSave);
+
+// Save: update the preset you're on, or ask for a name if it's new.
+async function quickSave() {
+  const p = activePreset && presets.find(activePreset.name);
+  if (p) {
+    const snap = snapshot();
+    storageNote(await presets.save(p.name, snap.settings, snap.camera));
+    activePreset = { name: p.name, edited: false };
+    renderPresetList();
+    status(`Saved ${p.name}`, 2000);
+    return;
+  }
+  const sec = document.querySelector('.sec[data-id="presets"]');
+  if (sec?.classList.contains('collapsed')) sec.querySelector('.sec-title').click();
+  sec?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  presetUI.input.focus();
+  status('Name this look and press Enter to save it.', 3000);
+}
 
 function toggleClean() {
   document.body.classList.toggle('clean');
@@ -1453,6 +1542,11 @@ function toggleClean() {
 
 window.addEventListener('keydown', (e) => {
   const tag = e.target.tagName;
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    quickSave();
+    return;
+  }
   if (e.key === 'Escape' && rendering) return renderAbort?.abort();
   if (tag === 'SELECT' || (tag === 'INPUT' && e.target.type !== 'range')) return;
   if (e.metaKey || e.ctrlKey || e.altKey || rendering) return;

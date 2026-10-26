@@ -387,6 +387,16 @@ export class GeometryLayer {
     return out;
   }
 
+  // A blank layer (for things like the VHS on-screen display).
+  clear(W, H) {
+    if (this.canvas.width !== W || this.canvas.height !== H) {
+      this.canvas.width = W;
+      this.canvas.height = H;
+    }
+    this.ctx.clearRect(0, 0, W, H);
+    return this.canvas;
+  }
+
   draw(sets, f, W, H) {
     if (this.canvas.width !== W || this.canvas.height !== H) {
       this.canvas.width = W;

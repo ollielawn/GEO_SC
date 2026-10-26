@@ -189,7 +189,19 @@ export class Renderer {
 
   applyEffect(fx, cur, f) {
     const gl = this.gl;
-    const prog = this.fxProgram(fx.id);
+    let prog;
+    try {
+      prog = this.fxProgram(fx.id);
+    } catch (err) {
+      // A broken effect is skipped rather than stopping everything.
+      this.fxFailed = this.fxFailed || {};
+      if (!this.fxFailed[fx.id]) {
+        this.fxFailed[fx.id] = err.message;
+        console.error(`Effect "${fx.id}" failed to compile`, err);
+        this.onEffectError?.(fx.id, err);
+      }
+      return cur;
+    }
     const P = this.post;
     const mosh = fx.id === 'datamosh';
     const dst = mosh ? P.hist[this.histIdx ^ 1] : cur === P.a ? P.b : P.a;

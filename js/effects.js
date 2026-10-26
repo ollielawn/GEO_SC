@@ -34,7 +34,7 @@ precision highp int;
 uniform sampler2D uSrc;
 uniform vec2 uRes;
 uniform float uUnit, uTime, uBeat, uBeats, uAmount;
-uniform float uP[8];
+uniform float uP[12];
 uniform vec3 uC1, uC2;
 in vec2 vUv;
 out vec4 outColor;
@@ -190,28 +190,168 @@ void main() {
 `;
 
 const VHS = HEAD + /* glsl */ `
+// Built like the tape signal: 480 lines, soft luma, low-bandwidth delayed
+// chroma, edge ringing, per-line timing jitter, dropouts, tracking, head switching.
 void main() {
-  float frame = floor(uTime * 30.0);
+  float frame = floor(uTime * 29.97);
   uint fs = uint(frame);
-  vec2 uv = vUv;
-  float line = floor(uv.y * uRes.y / (2.0 * uUnit));
-  uv.x += (h1v(line, frame, 1u) - 0.5) * uP[0] * 0.004 + (vn2(vec2(uv.y * 40.0, uTime * 3.0), 2u) - 0.5) * uP[0] * 0.012;
-  float bp = 1.0 - fract(uTime * 0.08);
-  float band = exp(-pow((uv.y - bp) / 0.04, 2.0));
-  uv.x += band * uP[1] * 0.05 * (vn2(vec2(uv.y * 200.0, uTime * 20.0), 3u) - 0.5);
-  float hs = smoothstep(0.045, 0.0, uv.y);
-  uv.x += hs * uP[5] * 0.04 * (h1v(line, frame, 4u) - 0.3);
-  vec3 yc = rgb2ycc(src(uv));
-  vec2 cc = vec2(0.0);
-  for (int k = 0; k < 6; k++) cc += rgb2ycc(src(uv - vec2(float(k) * uP[2] * 3.0 * uUnit / uRes.x, 0.0))).yz;
-  yc.yz = mix(yc.yz, cc / 6.0, min(1.0, uP[2] * 1.5));
-  yc.yz *= 1.0 + uP[4] * 0.5;
-  yc.z += uP[4] * 0.03;
-  vec3 c = ycc2rgb(yc);
-  c += uP[3] * 0.14 * (h2(ivec2(vUv * uRes / vec2(2.0, 1.0)), fs) - 0.5);
-  c += band * uP[1] * 0.3 * h2(ivec2(vUv * uRes / vec2(3.0, 1.0)), fs + 5u);
-  c += hs * uP[5] * 0.35 * (h2(ivec2(vUv * uRes / 2.0), fs + 7u) - 0.5);
+  float lines = 480.0;
+  float line = floor((1.0 - vUv.y) * lines);
+  float ux = uUnit / uRes.x;                                   // one 1080p pixel across, in uv
+  float jx = ((vn2(vec2(line * 0.08, uTime * 4.0), 2u) - 0.5) * 6.0 + (h1v(line, frame, 1u) - 0.5) * 1.5) * uP[0];
+  float bp = fract(-uTime * 0.06);
+  float band = exp(-pow((vUv.y - bp) / 0.04, 2.0));
+  jx += band * uP[1] * (vn2(vec2(line * 0.5, uTime * 20.0), 3u) - 0.5) * 60.0;
+  float hs = smoothstep(0.035, 0.0, vUv.y);
+  jx += hs * uP[5] * (25.0 + 30.0 * h1v(line, frame, 4u));
+  vec2 uv = vec2(vUv.x + jx * ux, 1.0 - (line + 0.5) / lines);
+  // Luma: low horizontal bandwidth, then ringing (the sharpening halo VCRs add).
+  float bw = 0.8 + uP[6] * 4.0;
+  float Y = 0.0, Yt = 0.0, Yw = 0.0;
+  for (int k = -3; k <= 3; k++) {
+    float w = exp(-float(k * k) / 4.5);
+    Y += lum(src(uv + vec2(float(k) * bw * ux, 0.0))) * w;
+    Yt += w;
+  }
+  Y /= Yt;
+  for (int k = -2; k <= 2; k++) Yw += lum(src(uv + vec2((float(k) * bw * 3.0 + 2.0) * ux, 0.0)));
+  Y += (Y - Yw / 5.0) * uP[7] * 1.6;
+  // Chroma: a fraction of the luma bandwidth, smeared and delayed to the right.
+  vec2 C = vec2(0.0);
+  float Ct = 0.0;
+  float cb = 3.0 + uP[2] * 22.0;
+  for (int k = -4; k <= 4; k++) {
+    float w = exp(-float(k * k) / 8.0);
+    C += rgb2ycc(src(uv + vec2((float(k) * cb * 0.5 - uP[2] * 9.0) * ux, 0.0))).yz * w;
+    Ct += w;
+  }
+  C /= Ct;
+  float x = vUv.x / ux;
+  C += (vec2(vn2(vec2(x * 0.015, line * 0.5 + frame * 13.0), 5u), vn2(vec2(x * 0.015 + 40.0, line * 0.5 + frame * 13.0), 6u)) - 0.5) * uP[3] * 0.09;
+  C *= 1.0 - uP[4] * 0.3;
+  vec3 c = ycc2rgb(vec3(Y, C));
+  c += uP[3] * ((vn2(vec2(x * 0.3, line + frame * 61.0), 7u) - 0.5) * 0.13 + (h2(ivec2(int(x * 0.7), int(line)), fs + 11u) - 0.5) * 0.05);
+  if (h1v(line, frame, 8u) < uP[8] * 0.02) {
+    float sx = h1v(line, frame, 12u) * uRes.x / uUnit;
+    float len = 15.0 + 170.0 * h1v(line, frame, 13u);
+    c = mix(c, vec3(0.95), step(sx, x) * step(x, sx + len) * 0.9);
+  }
+  c = mix(c, vec3(h2(ivec2(int(x / 3.0), int(line)), fs + 9u)), uP[1] * band * 0.45);
+  c = mix(c, vec3(h2(ivec2(int(x * 0.5), int(line)), fs + 10u)), uP[5] * hs * 0.5);
+  c = mix(c, c * 0.9 + 0.045, uP[4]);                           // lifted blacks, softer whites
   outColor = vec4(mix(src(vUv), c, uAmount), 1.0);
+}
+`;
+
+const FILMFX = HEAD + /* glsl */ `
+vec3 stockColour(vec3 c, int stock) {
+  float l = lum(c);
+  if (stock == 3) {                                             // black and white
+    float m = smoothstep(0.02, 0.98, l);
+    return vec3(1.02, 1.0, 0.96) * mix(l, m, 0.7);
+  }
+  if (stock == 2) {                                             // Super 8 reversal: punchy, warm, faded blacks
+    c = mix(vec3(l), c, 1.3);
+    c = smoothstep(-0.05, 1.02, c);
+    return c * vec3(1.06, 1.0, 0.86) + vec3(0.045, 0.02, 0.04) * (1.0 - l);
+  }
+  if (stock == 1) {                                             // 16mm: softer, cooler, greener shadows
+    c = mix(vec3(l), c, 0.82);
+    c = mix(c, vec3(0.5), 0.06);
+    return c + vec3(-0.005, 0.018, 0.006) * (1.0 - l);
+  }
+  vec3 s = c * c * (3.0 - 2.0 * c);                              // 35mm print: S-curve, warm highs, teal lows
+  c = mix(c, s, 0.5) * 0.95 + 0.025;
+  return c + vec3(0.03, 0.008, -0.025) * l - vec3(0.018, -0.004, -0.018) * (1.0 - l);
+}
+void main() {
+  int stock = int(uP[0] + 0.5);
+  float soft = stock == 3 ? 0.0 : stock == 2 ? 0.6 : stock == 1 ? 0.65 : 0.75;
+  float sizeMul = stock == 2 ? 2.2 : stock == 1 ? 1.5 : 1.0;
+  Film f = Film(uP[1], uP[2] * sizeMul, soft, stock == 3 ? 0.0 : 0.55, stock == 2 ? 0.6 : 0.35, uP[5], uP[6],
+                stock == 0 ? 0.08 : 0.3, uP[8], stock == 2 ? 0.3 : 0.0, stock == 2 ? 0.4 : 0.0, stock == 2 ? 18.0 : 24.0,
+                stock == 3 ? 1.0 : 0.0, uP[4]);
+  float frame = filmFrame(uTime, f);
+  vec2 uv = vUv + filmWeave(frame, f) * uUnit / uRes;
+  vec3 c = src(uv);
+  if (uP[9] > 0.0) {                                            // lens softness
+    vec2 r = 1.5 * uUnit / uRes;
+    vec3 b = (src(uv + vec2(r.x, 0.0)) + src(uv - vec2(r.x, 0.0)) + src(uv + vec2(0.0, r.y)) + src(uv - vec2(0.0, r.y))) * 0.25;
+    c = mix(c, b, uP[9] * 0.8);
+  }
+  vec3 hal = vec3(0.0);                                         // halation: highlights bleed red-orange
+  for (int i = 0; i < 8; i++) {
+    float a = float(i) / 8.0 * TAU;
+    vec2 d = vec2(cos(a), sin(a)) * uUnit / uRes;
+    hal += max(src(uv + d * 5.0) - 0.62, 0.0) + max(src(uv + d * 13.0) - 0.62, 0.0);
+  }
+  c += lum(hal / 16.0) * vec3(1.0, 0.33, 0.1) * uP[3] * 2.2;
+  c = mix(c, stockColour(clamp(c, 0.0, 1.0), stock), uP[7]);
+  c = filmLook(c, uv * uRes / uUnit, uv, uRes, uUnit, uTime, f);
+  outColor = vec4(mix(src(vUv), c, uAmount), 1.0);
+}
+`;
+
+const PHOSPHOR = HEAD + /* glsl */ `
+// A close-up of a picture tube: every screen pixel is a red, green and blue
+// phosphor lit by an electron beam whose spot grows with brightness, so dark
+// areas break into separate dots and bright ones swell and merge toward white.
+const vec3 PR = vec3(1.0, 0.1, 0.06), PG = vec3(0.1, 1.0, 0.16), PB = vec3(0.09, 0.2, 1.0);
+void main() {
+  float a = radians(uP[7]);
+  mat2 R = mat2(cos(a), sin(a), -sin(a), cos(a));
+  vec2 centre = uRes * 0.5;
+  vec2 p = R * (vUv * uRes - centre) / uUnit;                  // rotated, in 1080p pixels
+  float cell = uP[0];
+  int kind = int(uP[1] + 0.5);
+  vec2 g = p / cell;
+  float bloom = uP[2], gap = uP[3], focus = uP[8];
+  vec3 acc = vec3(0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      float cx = floor(g.x) + float(i);
+      float yoff = kind == 1 || kind == 2 ? mod(cx, 2.0) * 0.5 : 0.0;   // slot and dot masks are staggered
+      float cy = floor(g.y - yoff) + float(j);
+      vec2 ctr = vec2(cx + 0.5, cy + 0.5 + yoff);
+      vec2 spx = transpose(R) * (ctr * cell) * uUnit + centre;
+      vec3 s = pow(max(src(spx / uRes), 0.0), vec3(2.2)) * uP[5]; // to linear light, then drive
+      for (int k = 0; k < 3; k++) {
+        float v = s[k];
+        vec2 sub = kind == 2 ? ctr + vec2(float(k) - 1.0, k == 1 ? -0.28 : 0.2) * vec2(0.3, 1.0)
+                               : ctr + vec2((float(k) - 1.0) / 3.0, 0.0);
+        sub.x += (float(k) - 1.0) * uP[6] * 0.12;                // convergence error
+        vec2 d = g - sub;
+        float prof;
+        if (kind == 3) {                                       // LCD: hard-edged subpixels, no bloom
+          vec2 e = abs(d * vec2(3.0, 1.0));
+          float soft = 0.04 + focus * 0.12;
+          prof = smoothstep(0.42 + soft, 0.42 - soft, e.x) * smoothstep(0.44 + soft, 0.44 - soft, e.y);
+        } else if (kind == 2) {                                // round dots
+          float r = mix(0.1, 0.22, pow(v, 0.5)) * (1.0 + bloom * v * 0.7) + focus * 0.06;
+          prof = exp(-pow(length(d * vec2(1.0, 0.9)) / r, 2.2));
+        } else {                                                 // stripes and slots
+          float vv = pow(clamp(v, 0.0, 4.0), 0.55);
+          float wx = mix(0.16, 0.42, min(vv, 1.0)) * (1.0 + bloom * v * 0.6) + focus * 0.18;
+          float wy = mix(0.14, 0.48, min(vv, 1.0)) * (1.0 - gap * 0.45) + bloom * v * 0.22 + focus * 0.18;
+          if (kind == 1) wy *= 0.85;
+          prof = exp(-pow(abs(d.x * 3.0) / wx, 2.4)) * exp(-pow(abs(d.y) / wy, 2.4));
+        }
+        acc[k] += v * prof;
+      }
+    }
+  }
+  vec3 col = acc.r * PR + acc.g * PG + acc.b * PB;
+  vec3 glow = vec3(0.0);                                         // light spreading in the glass
+  for (int i = 0; i < 8; i++) {
+    float t = float(i) / 8.0 * TAU;
+    glow += pow(max(src(vUv + vec2(cos(t), sin(t)) * cell * 0.9 * uUnit / uRes), 0.0), vec3(2.2));
+  }
+  col += glow / 8.0 * uP[4] * 0.6 * uP[5];
+  col = 1.0 - exp(-col * 1.2);                                   // highlights burn out like a photo of a screen
+  float l = lum(col);
+  col = mix(vec3(l), col, uP[9] * 1.6);
+  col = pow(max(col, 0.0), vec3(1.0 / 2.2));
+  outColor = vec4(mix(src(vUv), col, uAmount), 1.0);
 }
 `;
 
@@ -340,17 +480,39 @@ export const EFFECTS = [
     ],
   },
   {
+    id: 'film',
+    label: 'Film stock',
+    note: 'Puts everything on film: grain that reacts to brightness, halation, gate weave, flicker, dust and the colour of the stock.',
+    frag: FILMFX,
+    params: [
+      seg('stock', 'Stock', [['0', '35mm colour'], ['1', '16mm'], ['2', 'Super 8'], ['3', 'Black and white']], '0'),
+      range('grain', 'Grain', 0, 1.5, 0.01, 0.6),
+      range('size', 'Grain size', 0.5, 4, 0.05, 1.1),
+      range('halation', 'Halation', 0, 1, 0.01, 0.35),
+      range('weave', 'Gate weave', 0, 1, 0.01, 0.3),
+      range('flicker', 'Flicker', 0, 1, 0.01, 0.25),
+      range('dust', 'Dust and hair', 0, 1, 0.01, 0.25),
+      range('colour', 'Stock colour', 0, 1, 0.01, 0.7),
+      range('vignette', 'Vignette', 0, 1, 0.01, 0.3),
+      range('soft', 'Lens softness', 0, 1, 0.01, 0.2),
+    ],
+  },
+  {
     id: 'vhs',
     label: 'VHS',
-    note: 'Tape wobble, tracking bands, bleeding colour and head-switching noise.',
+    note: 'Built like the tape signal: soft picture, colour smeared to the right, edge halos, line jitter, dropouts, tracking and head switching.',
     frag: VHS,
     params: [
       range('jitter', 'Line jitter', 0, 1, 0.01, 0.4),
-      range('tracking', 'Tracking', 0, 1, 0.01, 0.5),
+      range('tracking', 'Tracking', 0, 1, 0.01, 0.35),
       range('bleed', 'Colour bleed', 0, 1, 0.01, 0.6),
-      range('noise', 'Noise', 0, 1, 0.01, 0.4),
-      range('color', 'Colour shift', 0, 1, 0.01, 0.4),
+      range('noise', 'Tape noise', 0, 1, 0.01, 0.4),
+      range('color', 'Faded colour', 0, 1, 0.01, 0.5),
       range('head', 'Head switching', 0, 1, 0.01, 0.6),
+      range('soft', 'Softness', 0, 1, 0.01, 0.5),
+      range('ring', 'Edge halos', 0, 1, 0.01, 0.5),
+      range('dropouts', 'Dropouts', 0, 1, 0.01, 0.3),
+      seg('osd', 'On-screen display', [['0', 'Off'], ['1', 'PLAY'], ['2', 'Camcorder']], '0'),
     ],
   },
   {
@@ -367,6 +529,24 @@ export const EFFECTS = [
       range('glow', 'Glow', 0, 1, 0.01, 0.5),
       range('vignette', 'Vignette', 0, 1, 0.01, 0.6),
       range('flicker', 'Flicker and roll', 0, 1, 0.01, 0.3),
+    ],
+  },
+  {
+    id: 'phosphor',
+    label: 'RGB phosphors',
+    note: 'A macro view of a picture tube: each pixel becomes red, green and blue phosphors whose glow grows with brightness.',
+    frag: PHOSPHOR,
+    params: [
+      range('cell', 'Pixel size', 3, 60, 0.5, 14, { unit: ' px' }),
+      seg('layout', 'Phosphors', [['0', 'Stripes'], ['1', 'Slots'], ['2', 'Dots'], ['3', 'LCD']], '0'),
+      range('bloom', 'Bloom', 0, 1, 0.01, 0.4),
+      range('gap', 'Line gaps', 0, 1, 0.01, 0.75),
+      range('glow', 'Glow', 0, 1, 0.01, 0.4),
+      range('drive', 'Brightness', 0.5, 4, 0.01, 1.5),
+      range('converge', 'Misconvergence', 0, 1, 0.01, 0.15),
+      range('angle', 'Camera angle', -15, 15, 0.1, 0, { unit: '°' }),
+      range('focus', 'Focus blur', 0, 1, 0.01, 0.15),
+      range('sat', 'Saturation', 0, 1, 0.01, 0.85),
     ],
   },
 ];

@@ -11,32 +11,66 @@ const color = (id, label, def) => ({ id, label, type: 'color', def });
 export const BACKGROUNDS = [
   { id: 'plain', label: 'Plain', type: 0, params: [color('c1', 'Colour', '#eeefec')] },
   {
-    id: 'receipt',
-    label: 'Receipt scan',
-    type: 1,
+    id: 'film35',
+    label: '35mm colour',
+    type: 2,
     params: [
-      color('c1', 'Paper', '#f3f2ee'),
-      color('c2', 'Print and dust', '#8e8e8a'),
-      range('thermal', 'Thermal lines', 0, 1, 0.01, 0.5),
-      range('streaks', 'Scanner streaks', 0, 1, 0.01, 0.4),
-      range('fade', 'Fading', 0, 1, 0.01, 0.5),
-      range('dust', 'Dust', 0, 1, 0.01, 0.4),
-      range('edge', 'Edge shadow', 0, 1, 0.01, 0.5),
-      range('crumple', 'Creases', 0, 1, 0.01, 0.3),
+      color('c1', 'Base', '#cfc8bb'),
+      range('grain', 'Grain', 0, 1.5, 0.01, 0.6),
+      range('size', 'Grain size', 0.5, 4, 0.05, 1.1),
+      range('colour', 'Colour grain', 0, 1, 0.01, 0.5),
+      range('mottle', 'Density mottle', 0, 1, 0.01, 0.35),
+      range('flicker', 'Flicker', 0, 1, 0.01, 0.2),
+      range('weave', 'Gate weave', 0, 1, 0.01, 0.3),
+      range('dust', 'Dust and hair', 0, 1, 0.01, 0.25),
+      range('vignette', 'Vignette', 0, 1, 0.01, 0.3),
     ],
   },
   {
-    id: 'film',
-    label: 'Film grain',
-    type: 2,
+    id: 'film16',
+    label: '16mm',
+    type: 9,
     params: [
-      color('c1', 'Base', '#d8d0c0'),
-      range('amount', 'Grain', 0, 1, 0.01, 0.6),
-      range('size', 'Grain size', 0.5, 6, 0.05, 1.6),
-      range('flicker', 'Flicker', 0, 1, 0.01, 0.4),
-      range('dust', 'Dust and scratches', 0, 1, 0.01, 0.3),
-      range('vignette', 'Vignette', 0, 1, 0.01, 0.5),
-      range('fps', 'Grain frame rate', 6, 60, 1, 24, { unit: ' fps' }),
+      color('c1', 'Base', '#c4c3b4'),
+      range('grain', 'Grain', 0, 1.5, 0.01, 0.8),
+      range('size', 'Grain size', 0.5, 4, 0.05, 1.8),
+      range('colour', 'Colour grain', 0, 1, 0.01, 0.6),
+      range('flicker', 'Flicker', 0, 1, 0.01, 0.35),
+      range('weave', 'Gate weave', 0, 1, 0.01, 0.5),
+      range('dust', 'Dust and hair', 0, 1, 0.01, 0.45),
+      range('scratch', 'Scratches', 0, 1, 0.01, 0.3),
+      range('vignette', 'Vignette', 0, 1, 0.01, 0.45),
+    ],
+  },
+  {
+    id: 'super8',
+    label: 'Super 8',
+    type: 10,
+    params: [
+      color('c1', 'Base', '#d6c4a4'),
+      range('grain', 'Grain', 0, 1.5, 0.01, 0.9),
+      range('size', 'Grain size', 0.5, 4, 0.05, 2.6),
+      range('flicker', 'Flicker', 0, 1, 0.01, 0.6),
+      range('weave', 'Gate weave', 0, 1, 0.01, 0.7),
+      range('leaks', 'Light leaks', 0, 1, 0.01, 0.35),
+      range('dust', 'Dust and hair', 0, 1, 0.01, 0.5),
+      range('vignette', 'Vignette', 0, 1, 0.01, 0.7),
+      range('gate', 'Gate edges', 0, 1, 0.01, 0.5),
+    ],
+  },
+  {
+    id: 'filmbw',
+    label: 'Black and white film',
+    type: 11,
+    params: [
+      color('c1', 'Base', '#bdbdbb'),
+      range('grain', 'Grain', 0, 1.5, 0.01, 0.8),
+      range('size', 'Grain size', 0.5, 4, 0.05, 1.4),
+      range('flicker', 'Flicker', 0, 1, 0.01, 0.3),
+      range('weave', 'Gate weave', 0, 1, 0.01, 0.4),
+      range('dust', 'Dust and hair', 0, 1, 0.01, 0.4),
+      range('scratch', 'Scratches', 0, 1, 0.01, 0.35),
+      range('vignette', 'Vignette', 0, 1, 0.01, 0.4),
     ],
   },
   {
@@ -99,12 +133,14 @@ export const BACKGROUNDS = [
     label: 'VHS',
     type: 7,
     params: [
-      color('c1', 'Tape colour', '#0d1230'),
-      range('snow', 'Snow', 0, 1, 0.01, 0.4),
+      color('c1', 'Tape colour', '#10142c'),
+      range('snow', 'Tape noise', 0, 1, 0.01, 0.45),
       range('tracking', 'Tracking', 0, 1, 0.01, 0.5),
-      range('bleed', 'Colour bleed', 0, 1, 0.01, 0.5),
-      range('wobble', 'Wobble', 0, 1, 0.01, 0.3),
+      range('chroma', 'Colour noise', 0, 1, 0.01, 0.5),
+      range('dropouts', 'Dropouts', 0, 1, 0.01, 0.4),
       range('head', 'Head switching', 0, 1, 0.01, 0.6),
+      range('jitter', 'Line jitter', 0, 1, 0.01, 0.4),
+      seg('osd', 'On-screen display', [['0', 'Off'], ['1', 'PLAY'], ['2', 'Camcorder']], '1'),
     ],
   },
   {
@@ -125,7 +161,7 @@ export const BG_FRAG = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 uniform int uType;
-uniform float uP[8];
+uniform float uP[12];
 uniform vec3 uC1, uC2;
 uniform vec2 uRes;       // output size in pixels
 uniform float uSS, uUnit, uTime, uAlpha;
@@ -134,55 +170,18 @@ ${GLSL_COMMON}
 
 const float TAU = 6.2831853;
 
-vec3 receipt(vec2 px, vec2 q, vec2 uv) {
-  vec3 c = uC1;
-  c *= 1.0 - 0.035 * fbm2(q * vec2(0.5, 0.12), 1u);                         // paper fibre
-  c = mix(c, c * 0.9 + 0.03, uP[2] * smoothstep(0.4, 0.75, fbm2(uv * vec2(3.0, 5.0), 2u))); // fading
-  float rl = h1(floor(q.y / 1.6), 3u);                                       // thermal head rows
-  c = mix(c, uC2, uP[0] * 0.14 * smoothstep(0.86, 1.0, rl));
-  c *= 1.0 - uP[0] * 0.025 * (0.5 + 0.5 * sin(q.y * 3.14159 / 1.6));
-  float sl = h1(floor(q.x / 2.0), 4u);                                       // scanner CCD streaks
-  c = mix(c, uC2, uP[1] * 0.2 * smoothstep(0.94, 1.0, sl));
-  c += uP[1] * 0.02 * (vn2(vec2(q.x * 0.4, 0.5), 5u) - 0.5);
-  vec2 pp = (uv - 0.5) * vec2(uRes.x / uRes.y, 1.0);                        // creases: a few straight folds
-  for (int k = 0; k < 5; k++) {
-    float a = h1(float(k), 21u) * 3.14159;
-    float d = dot(pp, vec2(cos(a), sin(a))) - (h1(float(k), 22u) - 0.5) * 0.9;
-    d += (vn2(pp * 60.0 + float(k) * 7.0, 23u) - 0.5) * 0.002;
-    float side = d > 0.0 ? 1.0 : -0.6;
-    c *= 1.0 - uP[5] * (0.16 * smoothstep(0.0018, 0.0, abs(d)) + 0.05 * side * exp(-abs(d) * 25.0));
-  }
-  c *= 1.0 + uP[5] * 0.05 * (fbm2(uv * 5.0, 7u) - 0.5);
-  float d = h2(ivec2(floor(q / 2.5)), 8u);                                   // dust
-  c = mix(c, uC2 * 0.55, uP[3] * step(0.9975, d));
-  float hair = abs(vn2(q * 0.01 + 4.0, 15u) - 0.5);
-  c = mix(c, uC2 * 0.7, uP[3] * 0.5 * smoothstep(0.004, 0.0, hair) * step(0.6, vn2(q * 0.003, 16u)));
-  float e = min(uv.x, 1.0 - uv.x);                                           // scanner bed shadow
-  c *= 1.0 - uP[4] * 0.35 * smoothstep(0.1, 0.0, e);
-  c += (h2(ivec2(px), 9u) - 0.5) * 0.02;                                     // sensor noise
-  return c;
+Film filmFor(int type) {
+  //          grain   size    soft  colour  mottle  flicker dust    scratch vignette leaks  gate   fps   mono weave
+  if (type == 2)  return Film(uP[0], uP[1], 0.75, uP[2], uP[3], uP[4], uP[6], 0.08,  uP[7], 0.0,  0.0,  24.0, 0.0, uP[5]);
+  if (type == 9)  return Film(uP[0], uP[1], 0.65, uP[2], 0.45,  uP[3], uP[5], uP[6], uP[7], 0.0,  0.0,  24.0, 0.0, uP[4]);
+  if (type == 10) return Film(uP[0], uP[1], 0.6,  0.7,   0.6,   uP[2], uP[5], 0.25,  uP[6], uP[4], uP[7], 18.0, 0.0, uP[3]);
+  return               Film(uP[0], uP[1], 0.0,  0.0,   0.3,   uP[2], uP[4], uP[5], uP[6], 0.0,  0.0,  24.0, 1.0, uP[3]);
 }
 
-vec3 film(vec2 px, vec2 q, vec2 uv) {
-  float frame = floor(uTime * uP[5]);
-  uint fs = uint(frame);
-  vec2 g = q / uP[1];
-  float n = vn2(g + frame * 17.31, fs) * 0.55 + h2(ivec2(g * 1.7), fs + 11u) * 0.45 - 0.5;
-  vec3 c = uC1 * (1.0 + n * uP[0] * 0.55);
-  c *= 1.0 - uP[2] * 0.09 * (h1(frame, 12u) - 0.5) * 2.0;
-  for (int k = 0; k < 3; k++) {
-    float sx = h1v(frame, float(k), 13u);
-    if (h1v(floor(frame / 3.0), float(k), 14u) < uP[3] * 0.8) {
-      float dx = abs(uv.x - sx) * uRes.x / uUnit;
-      float along = smoothstep(0.2, 0.6, vn2(vec2(float(k) * 9.0, q.y * 0.01), 18u));
-      c *= 1.0 - 0.4 * smoothstep(1.4, 0.0, dx) * along;
-    }
-  }
-  float dn = vn2(q / 5.0 + frame * 31.7, fs + 20u);
-  c *= 1.0 - uP[3] * 0.7 * smoothstep(0.93, 0.985, dn);
-  vec2 v = uv - 0.5;
-  c *= 1.0 - uP[4] * dot(v, v) * 1.8;
-  return c;
+vec3 film(vec2 q, vec2 uv, int type) {
+  Film f = filmFor(type);
+  vec2 off = filmWeave(filmFrame(uTime, f), f);
+  return filmLook(uC1, q + off, uv + off * uUnit / uRes, uRes, uUnit, uTime, f);
 }
 
 vec3 digital(vec2 px, vec2 q, vec2 uv) {
@@ -234,21 +233,32 @@ vec3 crtBg(vec2 px, vec2 q, vec2 uv) {
   return c;
 }
 
+// Blank tape, built like the signal: ~480 lines, low horizontal bandwidth,
+// smeared colour, per-line timing jitter, dropouts, tracking and head switching.
 vec3 vhs(vec2 px, vec2 q, vec2 uv) {
-  float frame = floor(uTime * 30.0);
+  float frame = floor(uTime * 29.97);
   uint fs = uint(frame);
-  q.x += sin(uv.y * 40.0 + uTime * 3.0) * uP[3] * 3.0;
-  vec3 c = uC1 * (0.88 + 0.12 * vn2(vec2(0.5, q.y * 0.02 - uTime * 0.5), 50u));
-  c += uP[0] * 0.35 * (h2(ivec2(floor(q.x / 1.5), floor(px.y)), fs) - 0.5);
-  float ln = h1(floor(q.y / 2.0), fs + 3u);
-  c += uP[0] * 0.5 * step(0.985, ln) * h2(ivec2(px), fs + 5u);
-  float bp = 1.0 - fract(uTime * 0.07);
-  float band = exp(-pow((uv.y - bp) / 0.03, 2.0));
-  c += uP[1] * band * 0.35 * h2(ivec2(floor(q.x / 3.0), floor(px.y)), fs + 7u);
-  float cb = vn2(vec2(q.x * 0.01 + uTime * 0.2, q.y * 0.5), 60u) - 0.5;
-  c += uP[2] * vec3(cb, -cb * 0.5, cb * 0.8) * 0.14;
-  float hs = smoothstep(0.035, 0.0, uv.y);
-  c = mix(c, vec3(h2(ivec2(px / 2.0), fs + 9u)), uP[4] * hs * 0.6);
+  vec2 qr = uRes / uUnit;
+  float line = floor((1.0 - uv.y) * 480.0);
+  float jit = (vn2(vec2(line * 0.08, uTime * 4.0), 50u) - 0.5) * uP[5] * 8.0 + (h1v(line, frame, 51u) - 0.5) * uP[5] * 2.0;
+  float x = q.x + jit;
+  vec3 c = uC1 * (0.92 + 0.08 * vn2(vec2(0.5, uTime * 0.8), 52u)) * (0.95 + 0.05 * vn2(vec2(0.5, line * 0.02 - uTime * 0.3), 53u));
+  float n = vn2(vec2(x * 0.3, line + frame * 61.0), 54u) - 0.5;            // streaky luma noise
+  float fine = h2(ivec2(int(x * 0.7), int(line)), fs + 55u) - 0.5;
+  c += uP[0] * (n * 0.24 + fine * 0.1);
+  vec3 yc = rgb2ycc(c);                                                      // long colour streaks
+  yc.yz += (vec2(vn2(vec2(x * 0.015, line * 0.5 + frame * 13.0), 56u), vn2(vec2(x * 0.015 + 40.0, line * 0.5 + frame * 13.0), 57u)) - 0.5) * uP[2] * 0.14;
+  c = ycc2rgb(yc);
+  if (h1v(line, frame, 58u) < uP[3] * 0.025) {                               // dropouts
+    float sx = h1v(line, frame, 59u) * qr.x;
+    float len = 15.0 + 170.0 * h1v(line, frame, 60u);
+    c = mix(c, vec3(0.92), step(sx, x) * step(x, sx + len) * 0.9);
+  }
+  float bp = fract(-uTime * 0.06);                                            // tracking band
+  float band = exp(-pow((uv.y - bp) / 0.035, 2.0));
+  c = mix(c, vec3(h2(ivec2(int(x / 3.0), int(line)), fs + 62u)), uP[1] * band * 0.7);
+  float hs = smoothstep(0.03, 0.0, uv.y);                                     // head switching
+  c = mix(c, vec3(h2(ivec2(int(x * 0.5 + hs * 40.0), int(line)), fs + 63u)) * 0.8, uP[4] * hs * 0.85);
   return c;
 }
 
@@ -268,8 +278,7 @@ void main() {
   vec2 uv = px / uRes;
   vec2 q = px / uUnit;               // 1080p-equivalent pixels, so textures scale with resolution
   vec3 c = uC1;
-  if (uType == 1) c = receipt(px, q, uv);
-  else if (uType == 2) c = film(px, q, uv);
+  if (uType == 2 || uType == 9 || uType == 10 || uType == 11) c = film(q, uv, uType);
   else if (uType == 3) c = digital(px, q, uv);
   else if (uType == 4) c = magazine(px, q, uv);
   else if (uType == 5) c = graph(px, q, uv);
