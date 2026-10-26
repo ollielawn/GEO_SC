@@ -313,8 +313,14 @@ void main() {
       float yoff = kind == 1 || kind == 2 ? mod(cx, 2.0) * 0.5 : 0.0;   // slot and dot masks are staggered
       float cy = floor(g.y - yoff) + float(j);
       vec2 ctr = vec2(cx + 0.5, cy + 0.5 + yoff);
-      vec2 spx = transpose(R) * (ctr * cell) * uUnit + centre;
-      vec3 s = pow(max(src(spx / uRes), 0.0), vec3(2.2)) * uP[5]; // to linear light, then drive
+      // Average the picture over the cell (particles have gaps; one tap would speckle).
+      vec3 s = vec3(0.0);
+      for (int t = 0; t < 4; t++) {
+        vec2 o = vec2(float(t & 1) - 0.5, float(t >> 1) - 0.5) * 0.5;
+        vec2 spx = transpose(R) * ((ctr + o) * cell) * uUnit + centre;
+        s += pow(max(src(spx / uRes), 0.0), vec3(2.2));
+      }
+      s *= 0.25 * uP[5];                                         // linear light, then drive
       for (int k = 0; k < 3; k++) {
         float v = s[k];
         vec2 sub = kind == 2 ? ctr + vec2(float(k) - 1.0, k == 1 ? -0.28 : 0.2) * vec2(0.3, 1.0)
@@ -331,8 +337,9 @@ void main() {
           prof = exp(-pow(length(d * vec2(1.0, 0.9)) / r, 2.2));
         } else {                                                 // stripes and slots
           float vv = pow(clamp(v, 0.0, 4.0), 0.55);
-          float wx = mix(0.16, 0.42, min(vv, 1.0)) * (1.0 + bloom * v * 0.6) + focus * 0.18;
-          float wy = mix(0.14, 0.48, min(vv, 1.0)) * (1.0 - gap * 0.45) + bloom * v * 0.22 + focus * 0.18;
+          // Beam spot grows with brightness (wider than tall), leaving dark seams between rows.
+          float wx = mix(0.14, 0.36, min(vv, 1.0)) * (1.0 + bloom * v * 0.35) + focus * 0.15;
+          float wy = mix(0.1, 0.3, min(vv, 1.0)) * (1.0 - gap * 0.5) + bloom * v * 0.08 + focus * 0.15;
           if (kind == 1) wy *= 0.85;
           prof = exp(-pow(abs(d.x * 3.0) / wx, 2.4)) * exp(-pow(abs(d.y) / wy, 2.4));
         }
