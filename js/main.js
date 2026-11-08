@@ -2,7 +2,9 @@ import { Renderer } from './renderer.js';
 import { aiAvailable, aiDepth, lumaDepth, flatDepth, flip } from './depth.js';
 import { Recorder, download, probeFormat } from './recorder.js';
 import { encodeVideo, findEncoder } from './encoder.js';
-import { analyse, pickPoints, buildLinks, GeometryLayer, FONTS } from './geometry.js';
+import { analyse, pickPoints, buildLinks, GeometryLayer, FONTS, displace, project, sampleBilinear } from './geometry.js';
+import { VideoSource, CameraSource } from './media.js';
+import { Tracker, drawTracking } from './tracking.js';
 import { BACKGROUNDS } from './backgrounds.js';
 import { EFFECTS, PALETTES, CHARSETS } from './effects.js';
 import { PresetStore, STARTERS, NOT_IN_PRESETS, clean } from './presets.js';
@@ -84,6 +86,43 @@ const DEFAULTS = {
   geoReveal: false,
   // background (per-background settings are added below from backgrounds.js)
   bg: 'plain',
+  // tracking (moving or still sources)
+  track: false,
+  trackMode: 'brightness',
+  trackThresh: 0.6,
+  trackInvert: false,
+  trackKey: '#e2231a',
+  trackKeyTol: 0.25,
+  trackRes: '192',
+  trackBlur: 0.5,
+  trackClose: 1,
+  trackMinSize: 0.3,
+  trackMaxSize: 40,
+  trackMaxCount: 12,
+  trackSmooth: 0.5,
+  trackHold: 6,
+  trackLatency: 'smooth',
+  trackStyle: 'outline',
+  trackColor: 'accent',
+  trackLineWidth: 1.2,
+  trackFill: 0.35,
+  trackPad: 6,
+  trackMark: 'cross',
+  trackLabelId: true,
+  trackLabelSize: false,
+  trackLabelPos: false,
+  trackLabelBox: false,
+  trackFont: 'mono',
+  trackTextSize: 1,
+  trackLinks: 'none',
+  trackLinkK: 2,
+  trackEdges: false,
+  trackEdgeThresh: 0.25,
+  trackEdgeMin: 6,
+  trackEdgeWidth: 1,
+  trackEdgeOpacity: 0.8,
+  trackEdgeColor: 'ink',
+  hud: false,
   // look
   colorMode: 'original',
   ink: '#111111',
@@ -244,6 +283,53 @@ const SECTIONS = [
       { key: 'geoOpacity', type: 'range', label: 'Opacity', min: 0.05, max: 1, step: 0.01 },
       { key: 'geoBox', type: 'toggle', label: 'Box behind numbers' },
       { key: 'geoReveal', type: 'toggle', label: 'Reveal with scan' },
+    ],
+  },
+  {
+    id: 'tracking',
+    title: 'Tracking',
+    toggle: 'track',
+    note: 'Finds blobs in the source picture or video each frame and follows them with stable IDs. Works best on video and webcam.',
+    controls: [
+      { key: 'trackMode', type: 'seg', label: 'Find blobs by', options: [['brightness', 'Brightness'], ['colour', 'Colour'], ['motion', 'Motion']] },
+      { key: 'trackThresh', type: 'range', label: 'Threshold', min: 0, max: 1, step: 0.01, show: () => S.trackMode !== 'colour' },
+      { key: 'trackInvert', type: 'toggle', label: 'Track dark areas', show: () => S.trackMode === 'brightness' },
+      { key: 'trackKey', type: 'color', label: 'Colour to track', show: () => S.trackMode === 'colour' },
+      { key: 'trackKeyTol', type: 'range', label: 'Colour tolerance', min: 0.02, max: 1, step: 0.01, show: () => S.trackMode === 'colour' },
+      { key: 'trackRes', type: 'seg', label: 'Detail', options: [['128', 'Low'], ['192', 'Medium'], ['256', 'High'], ['384', 'Fine']] },
+      { key: 'trackBlur', type: 'range', label: 'Soften', min: 0, max: 3, step: 0.05 },
+      { key: 'trackClose', type: 'range', label: 'Join nearby pieces', min: 0, max: 4, step: 1, unit: ' px' },
+      { key: 'trackMinSize', type: 'range', label: 'Smallest blob', min: 0, max: 10, step: 0.05, unit: '%' },
+      { key: 'trackMaxSize', type: 'range', label: 'Largest blob', min: 1, max: 100, step: 0.5, unit: '%' },
+      { key: 'trackMaxCount', type: 'range', label: 'Most blobs', min: 1, max: 32, step: 1, unit: '' },
+      { key: 'trackSmooth', type: 'range', label: 'Smoothing', min: 0, max: 0.95, step: 0.01 },
+      { key: 'trackHold', type: 'range', label: 'Hold lost blobs', min: 0, max: 30, step: 1, unit: ' frames' },
+      {
+        key: 'trackLatency',
+        type: 'seg',
+        label: 'Latency',
+        options: [['smooth', 'Smooth'], ['locked', 'Locked']],
+      },
+      { key: 'trackStyle', type: 'seg', label: 'Boxes', options: [['none', 'None'], ['outline', 'Outline'], ['filled', 'Filled'], ['negative', 'Negative']] },
+      { key: 'trackColor', type: 'seg', label: 'Colour', options: [['ink', 'Ink'], ['accent', 'Accent'], ['contrast', 'Black or white']] },
+      { key: 'trackLineWidth', type: 'range', label: 'Line weight', min: 0.25, max: 6, step: 0.05 },
+      { key: 'trackFill', type: 'range', label: 'Fill opacity', min: 0.05, max: 1, step: 0.01, show: () => S.trackStyle === 'filled' },
+      { key: 'trackPad', type: 'range', label: 'Box padding', min: 0, max: 60, step: 1, unit: ' px' },
+      { key: 'trackMark', type: 'seg', label: 'Centre mark', options: [['none', 'None'], ['dot', 'Dot'], ['cross', 'Cross'], ['circle', 'Ring']] },
+      { key: 'trackLabelId', type: 'toggle', label: 'Label: ID' },
+      { key: 'trackLabelSize', type: 'toggle', label: 'Label: size' },
+      { key: 'trackLabelPos', type: 'toggle', label: 'Label: position' },
+      { key: 'trackLabelBox', type: 'toggle', label: 'Box behind labels' },
+      { key: 'trackFont', type: 'seg', label: 'Label font', options: [['mono', 'Mono'], ['sans', 'Sans'], ['serif', 'Serif'], ['typewriter', 'Typewriter'], ['condensed', 'Condensed'], ['custom', 'Your font']] },
+      { key: 'trackTextSize', type: 'range', label: 'Label size', min: 0.5, max: 4, step: 0.05 },
+      { key: 'trackLinks', type: 'seg', label: 'Link centres', options: [['none', 'None'], ['nearest', 'Nearest'], ['chain', 'Chain'], ['hub', 'Hubs'], ['all', 'All']] },
+      { key: 'trackLinkK', type: 'range', label: 'Links per blob', min: 1, max: 6, step: 1, unit: '', show: () => S.trackLinks === 'nearest' || S.trackLinks === 'hub' },
+      { key: 'trackEdges', type: 'toggle', label: 'Trace edges' },
+      { key: 'trackEdgeThresh', type: 'range', label: 'Edge threshold', min: 0.02, max: 1, step: 0.01, show: () => S.trackEdges },
+      { key: 'trackEdgeMin', type: 'range', label: 'Shortest line', min: 2, max: 60, step: 1, unit: ' px', show: () => S.trackEdges },
+      { key: 'trackEdgeWidth', type: 'range', label: 'Edge weight', min: 0.25, max: 5, step: 0.05, show: () => S.trackEdges },
+      { key: 'trackEdgeOpacity', type: 'range', label: 'Edge opacity', min: 0.05, max: 1, step: 0.01, show: () => S.trackEdges },
+      { key: 'trackEdgeColor', type: 'seg', label: 'Edge colour', options: [['ink', 'Ink'], ['accent', 'Accent'], ['contrast', 'Black or white']], show: () => S.trackEdges },
     ],
   },
   {
@@ -408,7 +494,7 @@ try {
 } catch {
   /* ignore */
 }
-if (!Object.keys(collapsed).length) collapsed = { geo: true, effects: false, export: false };
+if (!Object.keys(collapsed).length) collapsed = { geo: true, tracking: true, effects: false, export: false };
 
 for (const section of SECTIONS) {
   const title = el('button', { type: 'button', class: 'sec-title', 'aria-expanded': 'true' }, el('h2', {}, section.title));
@@ -480,7 +566,7 @@ function fitCanvas() {
   const o = outputSize();
   renderer.setSize(o.w, o.h, o.ss);
   const r = stage.getBoundingClientRect();
-  const pad = document.body.classList.contains('clean') ? 0 : 28;
+  const pad = document.body.classList.contains('clean') || document.body.classList.contains('fullscreen') ? 0 : 28;
   const scale = Math.min((r.width - pad * 2) / o.w, (r.height - pad * 2) / o.h);
   canvas.style.width = `${Math.floor(o.w * scale)}px`;
   canvas.style.height = `${Math.floor(o.h * scale)}px`;
@@ -537,9 +623,23 @@ function depthKey() {
   return `${mode}:${S.flipDepth ? 1 : 0}`;
 }
 
+let warnedAiVideo = false;
 async function ensureDepth(slot) {
   const key = depthKey();
   if (slot.depthKey === key && slot.depth) return;
+  if (slot.kind !== 'image') {
+    // Moving sources take depth from brightness on the GPU, every frame.
+    const [mode] = key.split(':');
+    slot.gpuDepth = mode !== 'flat';
+    if (!slot.depth) slot.depth = renderer.depthTexture(new Float32Array([0.5]), 1, 1);
+    slot.depthData = null;
+    slot.depthKey = key;
+    if (S.depthMode === 'ai' && !warnedAiVideo) {
+      warnedAiVideo = true;
+      status('AI depth works on still pictures. Video and webcam use brightness depth.', 5000);
+    }
+    return;
+  }
   const [mode] = key.split(':');
   let d;
   if (mode === 'ai') {
@@ -569,6 +669,7 @@ async function ensureDepth(slot) {
 async function addImage(img, name) {
   const source = prepareSource(img);
   const slot = {
+    kind: 'image',
     name,
     source,
     width: source.width,
@@ -579,6 +680,70 @@ async function addImage(img, name) {
     depth: null,
     depthKey: null,
   };
+  await placeSlot(slot);
+}
+
+// <video> elements live in a hidden holder so browsers keep decoding them.
+const mediaHolder = el('div', { class: 'media-holder', 'aria-hidden': 'true' });
+document.body.append(mediaHolder);
+
+function movingSlot(media, name) {
+  mediaHolder.append(media.video);
+  return {
+    kind: media.kind,
+    media,
+    name,
+    source: media.video,
+    width: media.width,
+    height: media.height,
+    aspect: media.width / media.height,
+    color: newVideoTexture(media),
+    key: cornerColor(media.video),
+    depth: null,
+    depthKey: null,
+    gpuDepth: true,
+    mirror: media.kind === 'camera',
+    lastTime: -1,
+  };
+}
+
+function newVideoTexture(media) {
+  const tex = renderer.videoTexture(media.width, media.height);
+  renderer.updateVideoTexture(tex, media.video);
+  return tex;
+}
+
+async function addVideo(file) {
+  status(`Opening ${file.name}…`);
+  const media = new VideoSource(file);
+  try {
+    await media.load();
+  } catch (err) {
+    media.dispose();
+    throw new Error(err.message.startsWith('Timed out') ? 'the browser could not decode it. Try MP4 (H.264), MOV or WebM.' : err.message);
+  }
+  media.reanchor(clock.time, tempo(), 0);
+  await placeSlot(movingSlot(media, file.name));
+  status('');
+}
+
+async function addCamera(deviceId = '') {
+  if (!CameraSource.supported()) return status('This browser has no camera access here. Open GEO_SC from http://localhost.', 6000);
+  const media = new CameraSource();
+  try {
+    status('Starting camera…');
+    await media.start(deviceId);
+  } catch (err) {
+    media.dispose();
+    status(err.name === 'NotAllowedError' ? 'Camera access was blocked. Allow it in the address bar, then try again.' : `Couldn't start the camera: ${err.message}`, 7000);
+    return;
+  }
+  status('');
+  await placeSlot(movingSlot(media, media.label));
+  refreshCameraList();
+}
+
+async function placeSlot(slot) {
   let i = slots.findIndex((s) => !s);
   if (i === -1) {
     i = current;
@@ -592,6 +757,8 @@ async function addImage(img, name) {
 
 function disposeSlot(slot) {
   if (!slot) return;
+  slot.media?.dispose();
+  slot.media?.video.remove();
   renderer.deleteTexture(slot.color);
   renderer.deleteTexture(slot.depth);
 }
@@ -653,8 +820,12 @@ function renderSlots() {
     tctx.drawImage(slot.source, (ts - slot.width * s) / 2, (ts - slot.height * s) / 2, slot.width * s, slot.height * s);
     const btn = el('button', { type: 'button', class: 'slot', 'aria-pressed': String(active), title: slot.name, onclick: () => showSlot(i) }, thumb);
     const rm = el('button', { type: 'button', class: 'slot-remove', 'aria-label': `Remove ${slot.name}`, onclick: (e) => (e.stopPropagation(), removeSlot(i)) }, '×');
-    slotsEl.append(el('div', { class: 'slot-wrap' }, btn, rm));
+    const wrap = el('div', { class: 'slot-wrap', 'data-kind': slot.kind }, btn, rm);
+    if (slot.kind !== 'image') wrap.append(el('span', { class: 'slot-badge' }, slot.kind === 'camera' ? 'Live' : 'Video'));
+    slotsEl.append(wrap);
   });
+  updateTransport();
+  updateButtons();
 }
 
 async function addFiles(files) {
@@ -663,8 +834,13 @@ async function addFiles(files) {
       await loadFont(file);
       continue;
     }
-    if (!file.type.startsWith('image/')) continue;
+    const isVideo = file.type.startsWith('video/') || /\.(mp4|m4v|mov|webm|mkv|ogv)$/i.test(file.name);
+    if (!isVideo && !file.type.startsWith('image/')) continue;
     try {
+      if (isVideo) {
+        await addVideo(file);
+        continue;
+      }
       const bmp = await createImageBitmap(file);
       await addImage(bmp, file.name);
     } catch (err) {
@@ -678,6 +854,7 @@ fileInput.addEventListener('change', () => {
   fileInput.value = '';
 });
 document.getElementById('add').addEventListener('click', () => fileInput.click());
+document.getElementById('add-camera').addEventListener('click', () => addCamera());
 
 window.addEventListener('dragover', (e) => {
   e.preventDefault();
@@ -743,9 +920,9 @@ async function loadFont(file) {
   }
 }
 
-function fontFamily() {
-  if (S.geoFont === 'custom') return customFont ? `"${customFont.family}", ${FONTS.mono}` : FONTS.mono;
-  return FONTS[S.geoFont] || FONTS.mono;
+function fontFamily(key = 'geoFont') {
+  if (S[key] === 'custom') return customFont ? `"${customFont.family}", ${FONTS.mono}` : FONTS.mono;
+  return FONTS[S[key]] || FONTS.mono;
 }
 
 // ---------------------------------------------------------------- reacting to settings
@@ -756,6 +933,11 @@ async function rebuildDepth() {
 }
 
 function onChange(key) {
+  if (key === 'track' || key === 'trackMode' || key === 'trackRes' || key === 'trackLatency') resetTracking();
+  if (key === 'hud') updateHud();
+  if (key === 'trackFont' && S.trackFont === 'custom' && !customFont) {
+    status('Load a font file first (Geometry → Load a font file), or drop one onto the window.', 5000);
+  }
   if (['format', 'resolution', 'smoothing'].includes(key)) fitCanvas();
   if (['fps', 'quality', 'duration', 'bpm', 'bars'].includes(key)) updateExportInfo();
   if (key === 'depthMode' && S.depthMode === 'ai' && !aiState.ok) {
@@ -1207,6 +1389,7 @@ function frameParams() {
     beatPhase,
     beats,
     paperDark: isDark(bgBase()),
+    flipDepth: S.flipDepth,
     glow: S.glow,
     grain: S.grain,
     yaw,
@@ -1219,6 +1402,12 @@ function frameParams() {
 
 function geoSetFor(slot) {
   if (!slot) return null;
+  if (slot.kind !== 'image' && slot.mapsFrame !== frameNo) {
+    // Moving pictures are re-measured every frame.
+    slot.maps = analyse(slot.source, null, { width: slot.width, height: slot.height, mirror: slot.mirror, flip: S.flipDepth });
+    slot.mapsFrame = frameNo;
+    slot.geoPK = slot.geoLK = null;
+  }
   if (!slot.maps) slot.maps = analyse(slot.source, slot.depthData);
   const pk = [S.geoSource, S.geoCount, S.geoSpacing, S.key].join('|');
   if (slot.geoPK !== pk) {
@@ -1323,19 +1512,236 @@ function drawOSD(ctx, W, H, mode, t) {
   ctx.restore();
 }
 
+// ---------------------------------------------------------------- tracking
+
+const tracker = new Tracker();
+const TRACK_MODES = { brightness: 0, colour: 1, motion: 2 };
+let frameNo = 0;
+const perf = { frameMs: 0, trackMs: 0, fps: 0, frames: 0, since: performance.now() };
+
+function trackSize(slot) {
+  const long = Number(S.trackRes);
+  return slot.aspect >= 1
+    ? [long, Math.max(8, Math.round(long / slot.aspect))]
+    : [Math.max(8, Math.round(long * slot.aspect)), long];
+}
+
+function trackOpts() {
+  return {
+    minSize: S.trackMinSize,
+    maxSize: S.trackMaxSize,
+    maxCount: S.trackMaxCount,
+    smooth: S.trackSmooth,
+    hold: S.trackHold,
+    close: S.trackClose,
+    edges: S.trackEdges,
+    edgeThresh: S.trackEdgeThresh,
+    edgeMin: S.trackEdgeMin,
+  };
+}
+
+function pickColour(which) {
+  if (which === 'accent') return S.accent;
+  if (which === 'contrast') return isDark(bgBase()) ? '#ffffff' : '#000000';
+  return S.ink;
+}
+
+// Map a point on the source picture to the screen, through the same motion
+// the particles get (including a morph in progress).
+function screenMapper(f) {
+  const W = renderer.width, H = renderer.height;
+  const aspect = W / H;
+  const A = f.imageA, B = f.imageB;
+  const pa = renderer.plane(A.aspect, aspect, f.scale);
+  const pb = renderer.plane(B.aspect, aspect, f.scale);
+  let m = Math.min(1, Math.max(0, f.morph * 1.6 - 0.3));
+  m = m * m * (3 - 2 * m);
+  return (u, v, d) => {
+    const z = (d - 0.5) * f.depth;
+    let x = (u - 0.5) * 2 * pa[0], y = (0.5 - v) * 2 * pa[1];
+    if (f.morph) {
+      x += ((u - 0.5) * 2 * pb[0] - x) * m;
+      y += ((0.5 - v) * 2 * pb[1] - y) * m;
+    }
+    return project(f.view, f.proj, displace([x, y, z], d, f), W, H);
+  };
+}
+
+function depthSampler(slot) {
+  if (slot.gpuDepth) return (u, v, l) => (S.flipDepth ? l : 1 - l);
+  const d = slot.depthData;
+  if (d && d.data.length > 1) return (u, v) => sampleBilinear(d.data, d.width, d.height, u, v);
+  return () => 0.5;
+}
+
+function drawTrackingLayer(ctx, f) {
+  return drawTracking(
+    ctx,
+    renderer.width,
+    renderer.height,
+    tracker,
+    {
+      style: S.trackStyle,
+      color: pickColour(S.trackColor),
+      boxColor: bgBase(),
+      lineWidth: S.trackLineWidth,
+      fillOpacity: S.trackFill,
+      pad: S.trackPad,
+      centreMark: S.trackMark,
+      labelId: S.trackLabelId,
+      labelSize: S.trackLabelSize,
+      labelPos: S.trackLabelPos,
+      labelBox: S.trackLabelBox,
+      font: fontFamily('trackFont'),
+      textSize: S.trackTextSize,
+      links: S.trackLinks,
+      linkK: S.trackLinkK,
+      aspect: f.imageA.aspect,
+      hold: S.trackHold,
+      edges: S.trackEdges,
+      edgeColor: pickColour(S.trackEdgeColor),
+      edgeWidth: S.trackEdgeWidth,
+      edgeOpacity: S.trackEdgeOpacity,
+    },
+    screenMapper(f),
+    depthSampler(f.imageA),
+  );
+}
+
+// Smooth: analyse after drawing and show the result next frame (never waits on the GPU).
+// Locked: analyse first and wait for it, so boxes sit exactly on this frame.
+function runTrackPass(slot, offline, locked = false) {
+  const t0 = performance.now();
+  const [w, h] = trackSize(slot);
+  renderer.trackPass({
+    tex: slot.color,
+    srcWidth: slot.width,
+    mirror: slot.mirror,
+    mode: TRACK_MODES[S.trackMode] ?? 0,
+    thresh: S.trackThresh,
+    invert: S.trackInvert,
+    key: hexToRgb(S.trackKey),
+    keyTol: S.trackKeyTol,
+    blur: S.trackBlur,
+    w,
+    h,
+  });
+  if (offline || locked) {
+    // Read back straight away. In Smooth mode the result is used for the next
+    // frame, the same delay the live readback has, so exports match.
+    const r = renderer.readTrackSync();
+    if (r) tracker.process(r, trackOpts());
+  } else {
+    renderer.startTrackRead();
+  }
+  perf.trackMs = performance.now() - t0 + tracker.ms;
+}
+
+function resetTracking() {
+  tracker.reset();
+  renderer.resetTrack();
+}
+
+// ---------------------------------------------------------------- moving sources
+
+function activeSlots() {
+  const list = [];
+  if (slots[current]) list.push(slots[current]);
+  if (target !== -1 && slots[target] && target !== current) list.push(slots[target]);
+  return list;
+}
+
+// Live: keep videos on their timeline and upload new frames.
+function updateSourcesLive() {
+  const tp = tempo();
+  const inUse = new Set(activeSlots());
+  for (const slot of slots) {
+    if (!slot || slot.kind === 'image') continue;
+    if (!inUse.has(slot)) {
+      if (slot.kind === 'video' && !slot.media.video.paused) slot.media.video.pause();
+      continue;
+    }
+    if (slot.kind === 'video') slot.media.updateLive(clock.time, tp);
+    else slot.media.updateLive();
+    const v = slot.media.video;
+    if (v.readyState >= 2 && (slot.media.newFrame || v.currentTime !== slot.lastTime || slot.kind === 'camera')) {
+      renderer.updateVideoTexture(slot.color, v);
+      slot.media.newFrame = false;
+      slot.lastTime = v.currentTime;
+    }
+  }
+}
+
+// Export: put every video in use on the exact frame for this clock time.
+async function seekSourcesExact() {
+  const tp = tempo();
+  for (const slot of activeSlots()) {
+    if (slot.kind !== 'video') continue;
+    await slot.media.seekExact(clock.time, tp);
+    renderer.updateVideoTexture(slot.color, slot.media.video);
+    slot.lastTime = slot.media.video.currentTime;
+  }
+}
+
+// When the clock restarts (render or recording), playing videos start from the
+// beginning (bar 1 when tempo-synced) so every export is repeatable. A paused
+// video stays on the frame it's holding.
+function rebaseClock() {
+  const tp = tempo();
+  for (const slot of slots) {
+    if (slot?.kind !== 'video') continue;
+    const m = slot.media;
+    if (m.playing) {
+      m.anchor = 0;
+      m.phase = 0;
+    } else {
+      m.reanchor(clock.time, tp);
+    }
+    m.anchorClock = 0;
+  }
+  clock.time = 0;
+  clock.scan = 0;
+  clock.spin = 0;
+}
+
+function usesCamera() {
+  return activeSlots().some((s) => s.kind === 'camera');
+}
+
 function drawOverlay(f) {
   const geoCanvas = drawGeometry(f);
   const osd = osdMode();
-  if (!osd) return geoCanvas;
+  const tracking = S.track && f.imageA;
+  if (!osd && !tracking) {
+    renderer.setNegativeBoxes([]);
+    return geoCanvas;
+  }
   const canvas = geoCanvas || geoLayer.clear(renderer.width, renderer.height);
-  drawOSD(geoLayer.ctx, renderer.width, renderer.height, osd, f.time);
+  renderer.setNegativeBoxes(tracking ? drawTrackingLayer(geoLayer.ctx, f) : []);
+  if (osd) drawOSD(geoLayer.ctx, renderer.width, renderer.height, osd, f.time);
   return canvas;
 }
 
-function drawFrame() {
+function drawFrame(offline = false) {
+  const t0 = performance.now();
+  frameNo++;
+  const locked = S.track && S.trackLatency === 'locked';
+  if (!offline) {
+    updateSourcesLive();
+    if (S.track && !locked) for (const r of renderer.pollTrackReads()) tracker.process(r, trackOpts());
+  }
+  const trackSlot = slots[current];
+  if (locked && trackSlot) runTrackPass(trackSlot, offline, true);
+  const t1 = performance.now();
   const f = frameParams();
   renderer.setOverlay(drawOverlay(f));
+  const t2 = performance.now();
   lastCount = renderer.render(f);
+  const t3 = performance.now();
+  if (S.track && !locked && f.imageA) runTrackPass(f.imageA, offline);
+  const t4 = performance.now();
+  perf.frameMs = t4 - t0;
+  perf.parts = { sources: t1 - t0, overlay: t2 - t1, render: t3 - t2, track: t4 - t3 };
   return f;
 }
 
@@ -1382,8 +1788,15 @@ function updateExportInfo() {
 function updateButtons() {
   const secs = clipSeconds();
   if (rendering) return;
-  renderBtn.disabled = !canRender || !secs;
-  renderBtn.textContent = !canRender ? 'Render not supported here' : secs ? `Render ${secs.toFixed(secs % 1 ? 1 : 0)}s` : 'Pick a length to render';
+  const cam = usesCamera();
+  renderBtn.disabled = !canRender || !secs || cam;
+  renderBtn.textContent = !canRender
+    ? 'Render not supported here'
+    : cam
+      ? 'Webcam: use Record live'
+      : secs
+        ? `Render ${secs.toFixed(secs % 1 ? 1 : 0)}s`
+        : 'Pick a length to render';
   updateRecordLabel();
 }
 
@@ -1393,6 +1806,10 @@ async function renderVideo() {
     return;
   }
   if (recorder.active) return;
+  if (usesCamera()) {
+    status("Render needs a picture or video file: a webcam can't be stepped frame by frame. Use Record live for webcams.", 7000);
+    return;
+  }
   const fps = Number(S.fps);
   const secs = clipSeconds();
   if (!secs) return;
@@ -1400,9 +1817,8 @@ async function renderVideo() {
   rendering = true;
   renderAbort = new AbortController();
   document.body.classList.add('rendering');
-  clock.time = 0;
-  clock.scan = 0;
-  clock.spin = 0;
+  rebaseClock();
+  resetTracking();
   pointer.burst = 0;
   renderer.needsClear = true;
   renderer.moshFresh = true;
@@ -1417,7 +1833,8 @@ async function renderVideo() {
       signal: renderAbort.signal,
       renderFrame: async (i) => {
         if (i > 0) step(1 / fps);
-        drawFrame();
+        await seekSourcesExact();
+        drawFrame(true);
         if (i % 3 === 0) await new Promise((r) => setTimeout(r, 0)); // let the page breathe
       },
       onProgress: (p) => {
@@ -1438,6 +1855,7 @@ async function renderVideo() {
     renderAbort = null;
     document.body.classList.remove('rendering');
     clock.last = performance.now();
+    resetTracking();
     updateButtons();
   }
 }
@@ -1483,9 +1901,8 @@ async function toggleRecord() {
     return;
   }
   try {
-    clock.time = 0;
-    clock.scan = 0;
-    clock.spin = 0;
+    rebaseClock();
+    resetTracking();
     const fps = Number(S.fps);
     recorder.start(recFormat, { fps, bitrate: Math.min(100e6, renderer.width * renderer.height * fps * 0.2) });
     recStart = performance.now();
@@ -1538,6 +1955,161 @@ function toggleClean() {
   fitCanvas();
 }
 
+// ---------------------------------------------------------------- transport bar (video and webcam)
+
+const transport = document.getElementById('transport');
+const tp = {
+  play: document.getElementById('tp-play'),
+  scrub: document.getElementById('tp-scrub'),
+  time: document.getElementById('tp-time'),
+  speed: document.getElementById('tp-speed'),
+  loop: document.getElementById('tp-loop'),
+  sync: document.getElementById('tp-sync'),
+  camera: document.getElementById('tp-camera'),
+  mirror: document.getElementById('tp-mirror'),
+};
+let scrubbing = false;
+
+function shownSlot() {
+  return slots[target !== -1 ? target : current] || null;
+}
+
+function fmtTime(t) {
+  const m = Math.floor(t / 60);
+  return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`;
+}
+
+function updateTransport() {
+  const slot = shownSlot();
+  const kind = slot?.kind;
+  transport.hidden = !slot || kind === 'image';
+  transport.dataset.kind = kind || '';
+  if (!slot || kind === 'image') return;
+  if (kind === 'video') {
+    const m = slot.media;
+    tp.play.textContent = m.playing ? 'Pause' : 'Play';
+    tp.play.setAttribute('aria-pressed', String(m.playing));
+    tp.speed.value = String(m.speed);
+    tp.speed.disabled = m.sync > 0;
+    tp.loop.setAttribute('aria-checked', String(m.loop || m.sync > 0));
+    tp.loop.disabled = m.sync > 0;
+    tp.sync.value = String(m.sync);
+  } else {
+    tp.mirror.setAttribute('aria-checked', String(!!slot.mirror));
+  }
+  refreshTransport();
+}
+
+function refreshTransport() {
+  const slot = shownSlot();
+  if (!slot || slot.kind !== 'video' || transport.hidden) return;
+  const m = slot.media;
+  const pos = m.positionAt(clock.time, tempo());
+  if (!scrubbing) tp.scrub.value = String(m.duration ? Math.round((pos / m.duration) * 1000) : 0);
+  tp.time.textContent = `${fmtTime(pos)} / ${fmtTime(m.duration || 0)}`;
+}
+
+function videoSet(changes) {
+  const slot = shownSlot();
+  if (slot?.kind !== 'video') return;
+  slot.media.set(changes, clock.time, tempo());
+  updateTransport();
+}
+
+function togglePlay() {
+  const slot = shownSlot();
+  if (slot?.kind === 'video') videoSet({ playing: !slot.media.playing });
+}
+
+tp.play.addEventListener('click', togglePlay);
+tp.scrub.addEventListener('input', () => {
+  scrubbing = true;
+  const slot = shownSlot();
+  if (slot?.kind !== 'video') return;
+  slot.media.seekTo((Number(tp.scrub.value) / 1000) * slot.media.duration, clock.time, tempo());
+  refreshTransport();
+});
+tp.scrub.addEventListener('change', () => (scrubbing = false));
+tp.speed.addEventListener('change', () => videoSet({ speed: Number(tp.speed.value) }));
+tp.loop.addEventListener('click', () => {
+  const slot = shownSlot();
+  if (slot?.kind === 'video') videoSet({ loop: !slot.media.loop });
+});
+tp.sync.addEventListener('change', () => videoSet({ sync: Number(tp.sync.value) }));
+tp.mirror.addEventListener('click', () => {
+  const slot = shownSlot();
+  if (slot?.kind !== 'camera') return;
+  slot.mirror = !slot.mirror;
+  slot.mapsFrame = -1;
+  updateTransport();
+});
+tp.camera.addEventListener('change', async () => {
+  const slot = shownSlot();
+  if (slot?.kind !== 'camera') return;
+  try {
+    await slot.media.start(tp.camera.value);
+    if (slot.media.width !== slot.width || slot.media.height !== slot.height) {
+      renderer.deleteTexture(slot.color);
+      slot.color = newVideoTexture(slot.media);
+    }
+    Object.assign(slot, { width: slot.media.width, height: slot.media.height, aspect: slot.media.width / slot.media.height, name: slot.media.label });
+    renderSlots();
+  } catch (err) {
+    status(`Couldn't switch camera: ${err.message}`, 6000);
+  }
+});
+
+async function refreshCameraList() {
+  const list = await CameraSource.devices();
+  const slot = shownSlot();
+  tp.camera.replaceChildren(...list.map((d) => el('option', { value: d.id }, d.label)));
+  if (slot?.kind === 'camera') tp.camera.value = slot.media.deviceId;
+}
+navigator.mediaDevices?.addEventListener?.('devicechange', refreshCameraList);
+
+// ---------------------------------------------------------------- output window, fullscreen, readout
+
+let outWin = null;
+let outStream = null;
+// Called by output.html when it opens (or reloads) to receive the picture.
+window.geoAttachOutput = (videoEl) => {
+  if (!outStream) outStream = canvas.captureStream();
+  videoEl.srcObject = outStream;
+  videoEl.play().catch(() => {});
+};
+
+function openOutput() {
+  if (outWin && !outWin.closed) {
+    outWin.focus();
+    return;
+  }
+  outWin = window.open('output.html', 'geo_sc_output', 'popup,width=960,height=600');
+  if (!outWin) status('The browser blocked the output window. Allow pop-ups for this page, then try again.', 7000);
+  else status('Output window open. Drag it to the projector and press F there for fullscreen.', 6000);
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else stage.requestFullscreen?.().catch((err) => status(`Fullscreen isn't available: ${err.message}`, 5000));
+}
+document.addEventListener('fullscreenchange', () => {
+  document.body.classList.toggle('fullscreen', !!document.fullscreenElement);
+  fitCanvas();
+});
+
+const hud = document.getElementById('hud');
+function updateHud() {
+  hud.hidden = !S.hud;
+  if (!S.hud) return;
+  const lines = [`${perf.fps.toFixed(0)} fps`, `frame ${perf.frameMs.toFixed(1)} ms (CPU)`];
+  if (S.track) lines.push(`tracking ${perf.trackMs.toFixed(1)} ms, ${tracker.tracks.filter((t) => !t.missed).length} blobs`);
+  lines.push(`${renderer.width}×${renderer.height}${renderer.ss > 1 ? ` (×${renderer.ss})` : ''}`);
+  hud.textContent = lines.join('\n');
+}
+
+document.getElementById('output-window').addEventListener('click', openOutput);
+document.getElementById('fullscreen').addEventListener('click', toggleFullscreen);
+
 // ---------------------------------------------------------------- keyboard
 
 window.addEventListener('keydown', (e) => {
@@ -1564,6 +2136,11 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'p') wantStill = true;
   else if (k === 'h') toggleClean();
   else if (k === '0') Object.assign(cam, { ty: 0, tp: 0, tz: 1 });
+  else if (k === 'k') set('track', !S.track);
+  else if (k === 'f') toggleFullscreen();
+  else if (k === 'o') openOutput();
+  else if (k === 'i') set('hud', !S.hud);
+  else if (k === 'v') togglePlay();
   else if (/^[1-9]$/.test(k)) {
     const p = allPresets()[Number(k) - 1];
     if (p) applyPreset(p);
@@ -1576,12 +2153,20 @@ const countEl = document.getElementById('count');
 
 function frame(now) {
   if (!rendering) {
-    const dt = Math.min(0.05, (now - clock.last) / 1000);
+    const dt = Math.min(0.25, (now - clock.last) / 1000); // real time, unless the tab was away
     clock.last = now;
     step(dt);
     const f = drawFrame();
     updateRing(f.zoom);
     countEl.textContent = `${lastCount.toLocaleString()} particles`;
+    perf.frames++;
+    if (now - perf.since > 500) {
+      perf.fps = (perf.frames * 1000) / (now - perf.since);
+      perf.frames = 0;
+      perf.since = now;
+      updateHud();
+    }
+    refreshTransport();
 
     if (wantStill) {
       wantStill = false;
@@ -1617,4 +2202,4 @@ function frame(now) {
 })();
 
 // Exposed for debugging in the console.
-window.geo = { S, slots, renderer, set, render: renderVideo, presets, applyPreset };
+window.geo = { S, slots, renderer, set, render: renderVideo, presets, applyPreset, tracker, perf, addCamera, showSlot, clock };

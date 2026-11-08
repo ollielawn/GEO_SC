@@ -197,12 +197,60 @@ out vec4 outColor;
 void main() { outColor = vec4(texture(uSrc, vUv).rgb, 1.0); }
 `;
 
+// Tracking analysis, drawn into a small target and read back for blob
+// tracking in JS. Row 0 of the readback is the top of the picture.
+//   r = mask (brightness / colour key / motion), g = edge strength (Sobel),
+//   b = edge direction, a = brightness (next frame's motion reference)
+export const TRACK_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+uniform sampler2D uSrc, uPrev;
+uniform vec2 uRes;
+uniform float uLod, uMirror, uThresh, uInvert, uKeyTol;
+uniform int uMode;
+uniform vec3 uKey;
+in vec2 vUv;
+out vec4 outColor;
+${COMMON + NOISE2}
+vec4 S(vec2 uv) { return textureLod(uSrc, uMirror > 0.5 ? vec2(1.0 - uv.x, uv.y) : uv, uLod); }
+float L(vec2 uv) { return lum(S(uv).rgb); }
+void main() {
+  vec2 uv = vUv;
+  vec4 c = S(uv);
+  float l = lum(c.rgb);
+  vec2 d = 1.0 / uRes;
+  float tl = L(uv + vec2(-d.x, -d.y)), tc = L(uv + vec2(0.0, -d.y)), tr = L(uv + vec2(d.x, -d.y));
+  float ml = L(uv + vec2(-d.x, 0.0)), mr = L(uv + vec2(d.x, 0.0));
+  float bl = L(uv + vec2(-d.x, d.y)), bc = L(uv + vec2(0.0, d.y)), br = L(uv + vec2(d.x, d.y));
+  float gx = (tr + 2.0 * mr + br) - (tl + 2.0 * ml + bl);
+  float gy = (bl + 2.0 * bc + br) - (tl + 2.0 * tc + tr);
+  float mag = clamp(length(vec2(gx, gy)) * 0.25, 0.0, 1.0);
+  float dir = atan(gy, gx) / 6.2831853 + 0.5;
+  float mask;
+  if (uMode == 1) {          // colour key: chroma distance, a little brightness
+    vec3 a = rgb2ycc(c.rgb), k = rgb2ycc(uKey);
+    float dist = length(a.yz - k.yz) * 2.5 + abs(a.x - k.x) * 0.35;
+    mask = step(dist, uKeyTol);
+  } else if (uMode == 2) {   // motion: change since the previous frame
+    float pl = texture(uPrev, uv).a;
+    mask = step(0.01 + uThresh * 0.4, abs(l - pl));
+  } else {                   // brightness
+    mask = uInvert > 0.5 ? step(l, uThresh) : step(uThresh, l);
+  }
+  if (c.a < 0.5) mask = 0.0;
+  outColor = vec4(mask, mag, dir, l);
+}
+`;
+
 export const POINTS_VERT = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
 
 uniform sampler2D uColorA, uDepthA, uColorB, uDepthB;
 uniform float uLodA, uLodB;
+// Per-source flags: x = depth from brightness on the GPU (video, webcam),
+// y = flip that depth, z = mirror horizontally (webcams).
+uniform vec4 uSrcA, uSrcB;
 uniform vec2 uPlaneA, uPlaneB;      // half-size of each image in world units
 uniform vec3 uKeyA, uKeyB;          // background colour to remove, per image
 uniform ivec2 uGrid;
@@ -248,10 +296,20 @@ void main() {
   // Jitter inside the grid cell so it never reads as a grid.
   vec2 uv = (vec2(ix, iy) + 0.5 + (vec2(r0, r1) - 0.5) * 0.95) / vec2(uGrid);
 
-  vec4 cA = textureLod(uColorA, uv, uLodA);
-  vec4 cB = textureLod(uColorB, uv, uLodB);
-  float dA = texture(uDepthA, uv).r;
-  float dB = texture(uDepthB, uv).r;
+  vec2 uvA = uSrcA.z > 0.5 ? vec2(1.0 - uv.x, uv.y) : uv;
+  vec2 uvB = uSrcB.z > 0.5 ? vec2(1.0 - uv.x, uv.y) : uv;
+  vec4 cA = textureLod(uColorA, uvA, uLodA);
+  vec4 cB = textureLod(uColorB, uvB, uLodB);
+  float dA = texture(uDepthA, uvA).r;
+  float dB = texture(uDepthB, uvB).r;
+  if (uSrcA.x > 0.5) { // blurred brightness, darker = nearer (like the still-image Brightness mode)
+    float l = dot(textureLod(uColorA, uvA, uLodA + 3.0).rgb, vec3(0.299, 0.587, 0.114));
+    dA = mix(1.0 - l, l, uSrcA.y);
+  }
+  if (uSrcB.x > 0.5) {
+    float l = dot(textureLod(uColorB, uvB, uLodB + 3.0).rgb, vec3(0.299, 0.587, 0.114));
+    dB = mix(1.0 - l, l, uSrcB.y);
+  }
 
   // Staggered morph between image A and image B.
   float m = clamp(uMorph * 1.6 - r2 * 0.6, 0.0, 1.0);
@@ -391,6 +449,9 @@ precision highp float;
 precision highp int;
 uniform sampler2D uFrame, uOverlay;
 uniform float uGrain, uTime, uHasOverlay;
+// Tracking boxes drawn in NEGATIVE: x0, y0, x1, y1 in output uv, top-down.
+uniform vec4 uNeg[32];
+uniform int uNegN;
 uniform vec2 uRes;
 in vec2 vUv;
 out vec4 outColor;
@@ -401,6 +462,12 @@ void main() {
     uvec2 px = uvec2(vUv * uRes);
     uint seed = px.x * 1973u + px.y * 9277u + uint(uTime * 60.0) * 26699u;
     c += (rnd(seed, 7u) - 0.5) * uGrain;
+  }
+  vec2 tuv = vec2(vUv.x, 1.0 - vUv.y);
+  for (int i = 0; i < 32; i++) {
+    if (i >= uNegN) break;
+    vec4 b = uNeg[i];
+    if (tuv.x >= b.x && tuv.x <= b.z && tuv.y >= b.y && tuv.y <= b.w) c = 1.0 - c;
   }
   if (uHasOverlay > 0.5) {
     vec4 o = texture(uOverlay, vec2(vUv.x, 1.0 - vUv.y)); // premultiplied, canvas is top-down

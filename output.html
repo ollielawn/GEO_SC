@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GEO_SC output</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      body.idle { cursor: none; }
+      video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+      p {
+        position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); margin: 0;
+        padding: 8px 12px; background: #111; color: #ddd;
+        font: 13px -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+        transition: opacity 0.4s;
+      }
+      body.idle p { opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <video id="out" autoplay muted playsinline></video>
+    <p id="hint">Press F or double-click for fullscreen.</p>
+    <script>
+      // A clean feed of the GEO_SC canvas for a projector or second screen.
+      // The picture comes live from the main window (canvas.captureStream).
+      const video = document.getElementById('out');
+      const hint = document.getElementById('hint');
+      function attach() {
+        try {
+          if (window.opener && window.opener.geoAttachOutput) {
+            window.opener.geoAttachOutput(video);
+            return true;
+          }
+        } catch (e) { /* different origin */ }
+        hint.textContent = 'Open this from the Output window button in GEO_SC.';
+        return false;
+      }
+      attach();
+      const toggle = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
+      window.addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') toggle(); });
+      window.addEventListener('dblclick', toggle);
+      let idle = 0;
+      const wake = () => { document.body.classList.remove('idle'); clearTimeout(idle); idle = setTimeout(() => document.body.classList.add('idle'), 2000); };
+      window.addEventListener('mousemove', wake);
+      wake();
+    </script>
+  </body>
+</html>

@@ -41,7 +41,7 @@ After that the project is fully self-contained: it works offline and doesn't dep
 | Area | What it does |
 | --- | --- |
 | Presets | **Save preset** (or `⌘S`) saves the current look: background, effects, motion, geometry, colours and camera angle. Export settings and pictures aren't included. Click a preset, or press `1`–`9`, to recall it. **Switching** sets how presets change: a cut, or a blend over 1 beat, 1 bar or 2 bars at your tempo. Seven starter looks are included. |
-| Pictures | Up to four. Click a thumbnail (or press Space) to morph to it. Drag files onto the window or paste from the clipboard. |
+| Pictures, video and webcam | Up to four sources. **Add picture or video** takes images and video files (MP4, MOV, WebM); **Add camera** uses a webcam. Click a thumbnail (or press Space) to morph between them. Drag files onto the window or paste from the clipboard. Video and webcam get their depth from brightness, every frame. |
 | Source | Where depth comes from (AI model, brightness or flat), flipping near and far, and removing a plain background. The background colour is sampled from the picture's corners. |
 | Form | Particle count, dot size, how deep the 3D push is, and image size. |
 | Auto motion | Motion that runs by itself, locked to a tempo (type it, or tap it with `B`). One cycle = the bars you pick. **Spin** (turns per cycle), **Tilt**, **Wobble** (a figure-eight per cycle), **Dolly** (zoom in and out per cycle), **Beat pulse** (depth and dot size punch on every beat), **Wave** and **Ripple** (travel one wavelength per bar) and **Twist** (swings once per cycle). |
@@ -51,17 +51,30 @@ After that the project is fully self-contained: it works offline and doesn't dep
 | Geometry | Finds points in the picture (corners, edges, bright spots, dark spots or the nearest areas), joins them (nearest neighbours, a chain or hubs), marks them and labels them with what was actually measured: corner or edge strength (0–1), brightness (0–255), depth (0–1), live screen position or an index. Choose a font or drop in your own `.ttf`/`.otf`/`.woff2`. Points ride along with the particles. **Reveal with scan** makes them appear as the scan passes. |
 | Background | A procedural texture behind the particles, each with its own settings: **Plain**; four film stocks, **35mm colour**, **16mm**, **Super 8** and **Black and white film** (realistic grain made of overlapping particles that changes every film frame, gate weave, flicker, density mottle, dust and hair, scratches, vignette, plus light leaks and gate edges on Super 8); **Digital noise**; **Magazine** (halftone, fibres, show-through, gloss); **Graph paper**; **CRT screen**; **VHS** (blank tape built like the signal: streaky noise, colour streaks, dropouts, tracking, head switching, line jitter, optional PLAY or camcorder on-screen display); **Gradient**. Trails fade toward the texture. |
 | Effects | Post effects over everything, applied top to bottom. Each has an Amount and its own settings, and several follow the tempo. **Datamosh**, **Circuit bend**, **Low-res and JPEG**, **Retro palette**, **1-bit dither**, **ASCII terminal**, **RGB shift**, **Film stock** (35mm, 16mm, Super 8 or black and white: brightness-aware grain, halation, gate weave, flicker, dust, stock colour, lens softness), **VHS** (soft luma, low-bandwidth chroma smeared to the right, edge halos, line jitter, dropouts, tracking, head switching, on-screen display), **CRT** and **RGB phosphors** (a macro view of a picture tube: stripes, slots, dots or LCD subpixels whose glow grows with brightness, with bloom, line gaps, glow, misconvergence, camera angle and focus). |
+| Tracking | Finds blobs in the source each frame by **brightness**, **colour** (a key colour and tolerance) or **motion** (difference from the last frame), and follows them with stable IDs. Settings for detail, softening, joining nearby pieces, smallest and largest blob (% of the frame), most blobs, smoothing, how long lost blobs are held, and latency (**Smooth** never waits on the GPU; **Locked** has no lag). Draws **boxes** (outline, filled, or **negative**: the picture inverted inside the box), centre marks, **labels** (ID, size, position) in the Geometry fonts, **links** between blob centres, and **edges** traced as lines. All of it saves with presets. |
 | Look | Original, ink, negative or duotone colour; glow (additive blending); film grain. |
 
 Sections fold up: click a section title.
 
 On the canvas: drag to orbit, scroll to zoom, click to splash, double-click to reset the camera. Double-click any slider to reset it.
 
-Shortcuts: `⌘S`/`Ctrl+S` save the look, `1`–`9` apply a preset, `Space` next picture, `S` scan, `T` trails, `G` geometry, `B` tap tempo, `R` live record, `P` save still, `H` hide panel, `Esc` stop a render, `0` reset camera.
+Shortcuts: `⌘S`/`Ctrl+S` save the look, `1`–`9` apply a preset, `K` tracking, `V` play/pause video, `F` fullscreen, `O` output window, `I` performance readout, `Space` next picture, `S` scan, `T` trails, `G` geometry, `B` tap tempo, `R` live record, `P` save still, `H` hide panel, `Esc` stop a render, `0` reset camera.
 
 ## Where presets are kept
 
 Saved presets always go into your browser. When the app is running with `npm start`, they're also written to `presets/user.json` in the project folder: commit that file and your presets travel with the code, including to GitHub Pages. **Export presets** and **Import presets** move them between machines as a `.json` file.
+
+## Video and webcam
+
+When a video is showing, a bar under the picture has play/pause, a scrubber, speed, loop and **Tempo**, which stretches the loop to 1–16 bars so the video sits on your track's grid. For a webcam the bar has a camera picker and **Mirror**.
+
+Exports and live recordings start a playing video from its beginning (bar 1 when tempo-synced), so the same settings always render the same clip; a paused video exports the frame it's on. Render steps through the video frame by frame and runs tracking on every frame, so the result matches what you saw. Webcams can't be stepped frame by frame, so use **Record live** for those.
+
+## Live output (projector)
+
+- **Output window** (`O`) opens a second window showing only the picture, fed live from the canvas. Drag it to the projector and press `F` there for fullscreen. Keep the main window visible: browsers slow down hidden tabs.
+- **Fullscreen** (`F`) fills the screen with the picture alone.
+- **Performance readout** (`I`) shows fps, CPU time per frame, tracking time and blob count. It never appears in exports.
 
 ## Exporting
 
@@ -102,6 +115,10 @@ picture ──► depth map ──► background + particles (trails buffer) ─
 | `js/geometry.js` | Feature detection (Sobel edges, Harris corners, brightness, depth), linking, labels, and a JS mirror of the shader motion so the overlay tracks the particles |
 | `js/encoder.js` | Offline render: WebCodecs H.264 encoder plus a small MP4 writer |
 | `js/recorder.js` | Live recording with MediaRecorder |
+| `js/media.js` | Video files and webcams: playback, tempo sync, exact seeking for export |
+| `js/tracking.js` | Blob tracking (connected components, stable IDs, smoothing), edge tracing, and drawing boxes, labels and lines |
+| `output.html` | The clean output window |
+| `docs/video-and-tracking.md` | Design note for video, webcam and tracking |
 | `js/presets.js` | Preset storage (browser + `presets/user.json`) and the starter looks |
 | `serve.mjs` | A dependency-free local server that also saves presets into the project |
 | `scripts/setup.mjs` | Vendors the AI runtime and model |

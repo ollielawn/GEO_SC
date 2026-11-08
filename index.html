@@ -12,8 +12,37 @@
     <main id="stage">
       <canvas id="view" aria-label="Particle view. Drag to orbit, scroll to zoom, click to splash, double-click to reset."></canvas>
       <div id="ring" aria-hidden="true" hidden></div>
+      <pre id="hud" hidden></pre>
+      <div id="transport" hidden>
+        <button type="button" id="tp-play" class="tp-video" title="Play or pause (V)">Pause</button>
+        <input type="range" id="tp-scrub" class="tp-video" min="0" max="1000" value="0" aria-label="Position in the video" />
+        <span id="tp-time" class="tp-video">0:00.0 / 0:00.0</span>
+        <label class="tp-video">Speed
+          <select id="tp-speed">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="0.75">0.75×</option>
+            <option value="1">1×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2×</option>
+          </select>
+        </label>
+        <button type="button" id="tp-loop" class="tp-video switch-text" role="switch" aria-checked="true">Loop</button>
+        <label class="tp-video">Tempo
+          <select id="tp-sync" title="Stretch the loop to a number of bars at the tempo">
+            <option value="0">Free</option>
+            <option value="1">Loop = 1 bar</option>
+            <option value="2">Loop = 2 bars</option>
+            <option value="4">Loop = 4 bars</option>
+            <option value="8">Loop = 8 bars</option>
+            <option value="16">Loop = 16 bars</option>
+          </select>
+        </label>
+        <label class="tp-camera">Camera <select id="tp-camera"></select></label>
+        <button type="button" id="tp-mirror" class="tp-camera switch-text" role="switch" aria-checked="true">Mirror</button>
+      </div>
       <p id="status" role="status" hidden></p>
-      <div id="drop" aria-hidden="true"><span>Drop pictures to add them</span></div>
+      <div id="drop" aria-hidden="true"><span>Drop pictures or videos to add them</span></div>
     </main>
 
     <aside id="panel">
@@ -25,11 +54,14 @@
       <section class="pictures" aria-label="Pictures">
         <div class="sec-head">
           <h2>Pictures</h2>
-          <button type="button" id="add" class="link">Add pictures</button>
+          <span class="sec-links">
+            <button type="button" id="add" class="link">Add picture or video</button>
+            <button type="button" id="add-camera" class="link">Add camera</button>
+          </span>
         </div>
         <div id="slots"></div>
-        <p class="hint">Up to four. Space moves to the next one.</p>
-        <input type="file" id="file" accept="image/*" multiple hidden />
+        <p class="hint">Up to four pictures, videos or cameras. Space moves to the next one.</p>
+        <input type="file" id="file" accept="image/*,video/*,.mov,.mkv" multiple hidden />
       </section>
 
       <div id="controls"></div>
@@ -41,6 +73,8 @@
           <button type="button" id="save-preset" title="Save this look as a preset (⌘S or Ctrl+S)">Save preset</button>
           <button type="button" id="still" title="Save a PNG of this frame (P)">Save still</button>
           <button type="button" id="hide" title="Hide the panel (H)">Hide panel</button>
+          <button type="button" id="output-window" title="Open a clean output window for a projector or second screen (O)">Output window</button>
+          <button type="button" id="fullscreen" title="Fill the screen with the picture only (F)">Fullscreen</button>
         </div>
         <details class="keys">
           <summary>Shortcuts</summary>
@@ -57,6 +91,11 @@
             <dt>0</dt><dd>Reset camera</dd>
             <dt>1–9</dt><dd>Apply a preset</dd>
             <dt>⌘S</dt><dd>Save the look (Ctrl+S on Windows)</dd>
+            <dt>K</dt><dd>Tracking on or off</dd>
+            <dt>V</dt><dd>Play or pause the video</dd>
+            <dt>F</dt><dd>Fullscreen</dd>
+            <dt>O</dt><dd>Output window</dd>
+            <dt>I</dt><dd>Performance readout</dd>
             <dt>Drag</dt><dd>Orbit the camera</dd>
             <dt>Scroll</dt><dd>Zoom</dd>
             <dt>Double-click</dt><dd>Reset a slider, or the camera</dd>

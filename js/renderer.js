@@ -1,4 +1,4 @@
-import { POINTS_VERT, POINTS_FRAG, QUAD_VERT, PRESENT_FRAG, COPY_FRAG } from './shaders.js';
+import { POINTS_VERT, POINTS_FRAG, QUAD_VERT, PRESENT_FRAG, COPY_FRAG, TRACK_FRAG } from './shaders.js';
 import { BG_FRAG } from './backgrounds.js';
 import { EFFECTS, glyphAtlas } from './effects.js';
 import { perspective, multiply, translation, rotationX, rotationY } from './math.js';
@@ -50,6 +50,10 @@ export class Renderer {
     this.bg = program(gl, QUAD_VERT, BG_FRAG);
     this.present = program(gl, QUAD_VERT, PRESENT_FRAG);
     this.copy = program(gl, QUAD_VERT, COPY_FRAG);
+    this.trackProg = program(gl, QUAD_VERT, TRACK_FRAG);
+    this.track = null; // { targets: [a, b], idx, w, h, ring: [{ pbo, fence, seq }], seq }
+    this.negBoxes = new Float32Array(32 * 4);
+    this.negCount = 0;
     this.fxPrograms = {};
     this.atlases = {};
     this.post = null; // output-size targets for the effect chain
@@ -313,6 +317,166 @@ export class Renderer {
     return [gx, gy];
   }
 
+  // Refresh a texture from a playing <video> (file or webcam), with mipmaps
+  // so the particle grid and the tracker can sample it smoothly.
+  // Fixed-size storage for a moving source, so each frame updates in place.
+  videoTexture(w, h) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    const levels = Math.floor(Math.log2(Math.max(w, h))) + 1;
+    gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+
+  updateVideoTexture(tex, video) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
+
+  // Boxes to show in NEGATIVE: [{x0, y0, x1, y1}] in output uv (top-down).
+  setNegativeBoxes(list) {
+    const n = Math.min(32, list.length);
+    for (let i = 0; i < n; i++) this.negBoxes.set([list[i].x0, list[i].y0, list[i].x1, list[i].y1], i * 4);
+    this.negCount = n;
+  }
+
+  // ---- tracking analysis: a small pass over the source picture, read back to JS.
+  trackTargets(w, h) {
+    const gl = this.gl;
+    if (this.track && this.track.w === w && this.track.h === h) return this.track;
+    if (this.track) {
+      this.track.targets.forEach((t) => this.freeTarget(t));
+      for (const r of this.track.ring) {
+        gl.deleteBuffer(r.pbo);
+        if (r.fence) gl.deleteSync(r.fence);
+      }
+    }
+    const targets = [this.target(w, h), this.target(w, h)];
+    for (const t of targets) {
+      gl.bindTexture(gl.TEXTURE_2D, t.tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    }
+    // Three pixel buffers, so a read can start every frame while earlier ones finish.
+    const ring = [0, 1, 2].map(() => {
+      const pbo = gl.createBuffer();
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, w * h * 4, gl.STREAM_READ);
+      return { pbo, fence: null, seq: 0 };
+    });
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    this.track = { targets, idx: 0, w, h, ring, seq: 0 };
+    return this.track;
+  }
+
+  // Run the analysis for one source. o: { tex, srcWidth, mirror, mode, thresh, invert, key, keyTol, blur, w, h }
+  trackPass(o) {
+    const gl = this.gl;
+    const T = this.trackTargets(o.w, o.h);
+    const out = T.targets[T.idx];
+    const prev = T.targets[T.idx ^ 1];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo);
+    gl.viewport(0, 0, o.w, o.h);
+    gl.disable(gl.BLEND);
+    const P = this.trackProg;
+    gl.useProgram(P.p);
+    this.texUnit(P, 'uSrc', 0, o.tex);
+    this.texUnit(P, 'uPrev', 1, prev.tex);
+    this.uniforms(P, {
+      uRes: [o.w, o.h],
+      uLod: Math.max(0, Math.log2(o.srcWidth / o.w)) + o.blur,
+      uMirror: o.mirror ? 1 : 0,
+      uThresh: o.thresh,
+      uInvert: o.invert ? 1 : 0,
+      uKeyTol: o.keyTol,
+      uKey: o.key,
+      uMode: { int: o.mode },
+    });
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    T.last = out;
+    T.idx ^= 1;
+  }
+
+  // Blocking readback of the last analysis (used for frame-perfect export).
+  readTrackSync() {
+    const gl = this.gl;
+    const T = this.track;
+    if (!T || !T.last) return null;
+    const data = new Uint8Array(T.w * T.h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, T.last.fbo);
+    gl.readPixels(0, 0, T.w, T.h, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { data, w: T.w, h: T.h };
+  }
+
+  // Non-blocking readback for live use: copy into a free pixel buffer now and
+  // collect it on a later frame once the GPU has finished. Never stalls.
+  startTrackRead() {
+    const gl = this.gl;
+    const T = this.track;
+    if (!T || !T.last) return false;
+    const slot = T.ring.find((r) => !r.fence);
+    if (!slot) return false; // GPU is well behind: skip this frame rather than wait
+    gl.bindFramebuffer(gl.FRAMEBUFFER, T.last.fbo);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, slot.pbo);
+    gl.readPixels(0, 0, T.w, T.h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    slot.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    slot.seq = ++T.seq;
+    gl.flush();
+    return true;
+  }
+
+  // Every finished readback, oldest first, so the tracker sees frames in order.
+  pollTrackReads() {
+    const gl = this.gl;
+    const T = this.track;
+    const out = [];
+    if (!T) return out;
+    for (;;) {
+      const pending = T.ring.filter((r) => r.fence).sort((a, b) => a.seq - b.seq);
+      const r = pending[0];
+      if (!r) break;
+      const st = gl.clientWaitSync(r.fence, 0, 0);
+      if (st !== gl.ALREADY_SIGNALED && st !== gl.CONDITION_SATISFIED) break;
+      gl.deleteSync(r.fence);
+      r.fence = null;
+      const data = new Uint8Array(T.w * T.h * 4);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, r.pbo);
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, data);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      out.push({ data, w: T.w, h: T.h });
+    }
+    return out;
+  }
+
+  resetTrack() {
+    const gl = this.gl;
+    if (!this.track) return;
+    for (const r of this.track.ring) {
+      if (r.fence) gl.deleteSync(r.fence);
+      r.fence = null;
+    }
+    this.track.last = null;
+    // Clear motion history so a fresh run starts from a known state.
+    for (const t of this.track.targets) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
   deleteTexture(tex) {
     if (tex && tex !== this.blank.color && tex !== this.blank.depth) this.gl.deleteTexture(tex);
   }
@@ -394,6 +558,9 @@ export class Renderer {
     bind(3, 'uDepthB', B.depth);
     const lod = (img) => Math.max(0, Math.log2(img.width / gx));
     gl.uniform1f(P.loc('uLodA'), lod(A));
+    const srcFlags = (img) => [img.gpuDepth ? 1 : 0, f.flipDepth ? 1 : 0, img.mirror ? 1 : 0, 0];
+    gl.uniform4fv(P.loc('uSrcA'), srcFlags(A));
+    gl.uniform4fv(P.loc('uSrcB'), srcFlags(B));
     gl.uniform1f(P.loc('uLodB'), lod(B));
     gl.uniform2f(P.loc('uPlaneA'), planeA[0], planeA[1]);
     gl.uniform2f(P.loc('uPlaneB'), planeB[0], planeB[1]);
@@ -448,6 +615,8 @@ export class Renderer {
     this.texUnit(this.present, 'uFrame', 0, this.frameTex);
     this.texUnit(this.present, 'uOverlay', 1, this.hasOverlay ? this.overlayTex : this.blank.color);
     this.uniforms(this.present, { uGrain: f.grain, uTime: f.time, uRes: [W, H], uHasOverlay: this.hasOverlay ? 1 : 0 });
+    gl.uniform4fv(this.present.loc('uNeg'), this.negBoxes);
+    gl.uniform1i(this.present.loc('uNegN'), this.negCount);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // ---- effects, in order

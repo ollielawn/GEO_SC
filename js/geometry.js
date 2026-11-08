@@ -14,7 +14,7 @@ function canvas2d(w, h) {
   return [c, c.getContext('2d', { willReadFrequently: true })];
 }
 
-function sampleBilinear(data, w, h, u, v) {
+export function sampleBilinear(data, w, h, u, v) {
   const x = Math.min(w - 1, Math.max(0, u * w - 0.5));
   const y = Math.min(h - 1, Math.max(0, v * h - 0.5));
   const x0 = Math.floor(x), y0 = Math.floor(y);
@@ -26,12 +26,20 @@ function sampleBilinear(data, w, h, u, v) {
 }
 
 // Measure everything once per picture + depth map.
-export function analyse(source, depth) {
-  const aspect = source.width / source.height;
+// depth: { data, width, height } for stills, or null to take depth from
+// brightness (moving sources). o: { width, height, mirror, flip } for <video>.
+let scratch = null;
+export function analyse(source, depth, o = {}) {
+  const sw = o.width || source.width, sh = o.height || source.height;
+  const aspect = sw / sh;
   const w = aspect >= 1 ? ANALYSIS_LONG_SIDE : Math.max(8, Math.round(ANALYSIS_LONG_SIDE * aspect));
   const h = aspect >= 1 ? Math.max(8, Math.round(ANALYSIS_LONG_SIDE / aspect)) : ANALYSIS_LONG_SIDE;
-  const [, ctx] = canvas2d(w, h);
+  if (!scratch || scratch[0].width !== w || scratch[0].height !== h) scratch = canvas2d(w, h);
+  const ctx = scratch[1];
+  ctx.setTransform(o.mirror ? -1 : 1, 0, 0, 1, o.mirror ? w : 0, 0);
+  ctx.clearRect(0, 0, w, h);
   ctx.drawImage(source, 0, 0, w, h);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   const rgba = ctx.getImageData(0, 0, w, h).data;
   const n = w * h;
   const lum = new Float32Array(n);
@@ -80,7 +88,10 @@ export function analyse(source, depth) {
 
   const dep = new Float32Array(n);
   for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) dep[y * w + x] = sampleBilinear(depth.data, depth.width, depth.height, (x + 0.5) / w, (y + 0.5) / h);
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      dep[i] = depth ? sampleBilinear(depth.data, depth.width, depth.height, (x + 0.5) / w, (y + 0.5) / h) : o.flip ? lum[i] : 1 - lum[i];
+    }
   }
   return { w, h, rgba, lum, edge, corner, depth: dep };
 }
@@ -247,7 +258,7 @@ function noise3(x, y, z) {
 
 // Same displacement as the vertex shader, for one point (without the
 // per-particle randomness, which averages out).
-function displace(p, d, f) {
+export function displace(p, d, f) {
   let [x, y, z] = p;
   const TAU = Math.PI * 2;
   if (f.twist > 0) {
@@ -277,7 +288,7 @@ function displace(p, d, f) {
   return [x, y, z];
 }
 
-function project(view, proj, p, W, H) {
+export function project(view, proj, p, W, H) {
   const [x, y, z] = p;
   const vx = view[0] * x + view[4] * y + view[8] * z + view[12];
   const vy = view[1] * x + view[5] * y + view[9] * z + view[13];
@@ -323,7 +334,7 @@ function labelFor(p, i, mode, source, dec, screen) {
   }
 }
 
-function mark(ctx, kind, x, y, r) {
+export function mark(ctx, kind, x, y, r) {
   switch (kind) {
     case 'dot':
       ctx.beginPath();

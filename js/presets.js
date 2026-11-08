@@ -7,7 +7,7 @@
 //  - presets/user.json in the project folder, when running `npm start`
 //    (serve.mjs accepts the write), so presets can be committed with the code.
 
-export const NOT_IN_PRESETS = new Set(['format', 'resolution', 'smoothing', 'fps', 'quality', 'duration', 'depthMode', 'presetBlend']);
+export const NOT_IN_PRESETS = new Set(['format', 'resolution', 'smoothing', 'fps', 'quality', 'duration', 'depthMode', 'presetBlend', 'hud']);
 
 const LOCAL_KEY = 'geo_sc:presets:v1';
 const FILE_URL = new URL('../presets/user.json', import.meta.url).href;
