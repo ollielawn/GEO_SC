@@ -95,6 +95,8 @@ The clock restarts at the start of every export, so a given set of settings alwa
 
 **Save still** exports a PNG of the current frame at full resolution.
 
+**Export for website** writes `exports/<preset name>/`: every setting, the camera, the exact logo pixels, a 16-bit depth map and two fallback stills. A website player can then draw exactly the same look. See [docs/website-embed.md](docs/website-embed.md).
+
 Instagram re-compresses everything you upload. Starting from a clean, high-bitrate file is still what keeps it sharp after that.
 
 ## How it works
@@ -119,6 +121,7 @@ picture ──► depth map ──► background + particles (trails buffer) ─
 | `js/tracking.js` | Blob tracking (connected components, stable IDs, smoothing), edge tracing, and drawing boxes, labels and lines |
 | `output.html` | The clean output window |
 | `docs/video-and-tracking.md` | Design note for video, webcam and tracking |
+| `js/webexport.js` | Export for website: scene file, logo, 16-bit depth map, engine fingerprint |
 | `docs/website-embed.md` | How to put the engine on a website (steps, plus a build spec for the website's Claude agent) |
 | `js/presets.js` | Preset storage (browser + `presets/user.json`) and the starter looks |
 | `serve.mjs` | A dependency-free local server that also saves presets into the project |

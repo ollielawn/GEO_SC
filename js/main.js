@@ -5,6 +5,7 @@ import { encodeVideo, findEncoder } from './encoder.js';
 import { analyse, pickPoints, buildLinks, GeometryLayer, FONTS, displace, project, sampleBilinear } from './geometry.js';
 import { VideoSource, CameraSource } from './media.js';
 import { Tracker, drawTracking } from './tracking.js';
+import { ENGINE_FILES, engineHash, sourcePNG, depthPNG, saveScene } from './webexport.js';
 import { BACKGROUNDS } from './backgrounds.js';
 import { EFFECTS, PALETTES, CHARSETS } from './effects.js';
 import { PresetStore, STARTERS, NOT_IN_PRESETS, clean } from './presets.js';
@@ -382,6 +383,12 @@ const SECTIONS = [
         options: [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds'], [-1, '1 cycle'], [-2, '2 cycles'], [-4, '4 cycles'], [0, 'Until I stop it (live only)']],
       },
       { type: 'info', id: 'export-info' },
+      {
+        type: 'button',
+        label: 'Export for website',
+        id: 'web-export',
+        title: 'Everything a website needs to show this exact look: settings, logo, depth map and stills',
+      },
     ],
   },
 ];
@@ -1931,6 +1938,87 @@ recordBtn.addEventListener('click', toggleRecord);
 stillBtn.addEventListener('click', () => (wantStill = true));
 document.getElementById('hide').addEventListener('click', toggleClean);
 document.getElementById('save-preset').addEventListener('click', quickSave);
+buttons['web-export'].addEventListener('click', exportForWebsite);
+
+// Draw the current frame at another size and return it as a PNG.
+async function renderStill(w, h, type = 'image/png', quality) {
+  const prev = { w: renderer.width, h: renderer.height, ss: renderer.ss };
+  renderer.setSize(w, h, prev.ss);
+  renderer.needsClear = true;
+  drawFrame(true);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, type, quality)); // snapshot is taken immediately
+  renderer.setSize(prev.w, prev.h, prev.ss);
+  renderer.needsClear = true;
+  fitCanvas();
+  return blob;
+}
+
+// Export for website: one folder with everything needed to reproduce this look
+// exactly (see js/webexport.js and docs/website-embed.md).
+async function exportForWebsite() {
+  const slot = slots[current];
+  if (!slot) return;
+  if (slot.kind !== 'image') {
+    status('Export for website works with a picture as the source. Show your logo, then export.', 6000);
+    return;
+  }
+  if (rendering || recorder.active) return;
+  const btn = buttons['web-export'];
+  btn.disabled = true;
+  btn.textContent = 'Exporting…';
+  try {
+    await ensureDepth(slot);
+    const name = activePreset?.name || 'home';
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'home';
+    const [depthMode] = depthKey().split(':');
+    const unsupported = [S.geo && 'Geometry', S.track && 'Tracking', osdMode() && 'VHS on-screen display'].filter(Boolean);
+    const scene = {
+      app: 'GEO_SC',
+      kind: 'website-scene',
+      version: 1,
+      created: new Date().toISOString(),
+      preset: activePreset?.name || null,
+      engine: { files: ENGINE_FILES, sha256: await engineHash() },
+      settings: { ...S },
+      camera: { ty: cam.ty, tp: cam.tp, tz: cam.tz },
+      source: {
+        name: slot.name,
+        width: slot.width,
+        height: slot.height,
+        aspect: slot.aspect,
+        key: slot.key,
+        depthMode,
+        depthWidth: slot.depthData.width,
+        depthHeight: slot.depthData.height,
+        depthIncludesFlip: true,
+      },
+      designedAt: { width: renderer.width, height: renderer.height, format: S.format },
+      files: { logo: 'logo.png', depth: 'depth.png', stillWide: 'still-wide.jpg', stillTall: 'still-tall.jpg' },
+      unsupported,
+    };
+    const files = {
+      'logo.png': await sourcePNG(slot.source),
+      'depth.png': await depthPNG(slot.depthData),
+      // JPEG keeps the fallback stills light enough for a fast page load.
+      'still-wide.jpg': await renderStill(1920, 1080, 'image/jpeg', 0.86),
+      'still-tall.jpg': await renderStill(1080, 1920, 'image/jpeg', 0.86),
+    };
+    const res = await saveScene(slug, scene, files, download);
+    const note = unsupported.length ? ` Not on the website player yet: ${unsupported.join(', ')}.` : '';
+    status(
+      res.where === 'project'
+        ? `Exported to ${res.path} in the project folder. Copy that folder into the website.${note}`
+        : `Downloaded ${res.path} (run the app with npm start to export a folder instead).${note}`,
+      9000,
+    );
+  } catch (err) {
+    console.error(err);
+    status(`Export for website failed: ${err.message}`, 7000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Export for website';
+  }
+}
 
 // Save: update the preset you're on, or ask for a name if it's new.
 async function quickSave() {

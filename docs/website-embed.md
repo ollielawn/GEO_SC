@@ -8,10 +8,18 @@ page, scaling cleanly from phones to big monitors.
 - **Part 2** is the build spec for the Claude agent in the website repo. Point
   it at this file.
 
-The result is a small `assets/geo-sc/` folder in the website. It holds the
-engine files copied unchanged from GEO_SC, a `player.js` that mounts it on a
-canvas, your logo, the look as a preset, and fallback stills. There's no build
-step and no dependencies. It's about 86 KB of JavaScript before compression.
+The result is a small `assets/geo-sc/` folder in the website:
+
+- the engine files, copied unchanged from GEO_SC
+- a `player.js` that mounts the engine on a canvas
+- a **scene folder** made by GEO_SC's **Export for website** button, which holds
+  every setting, the camera, the exact logo pixels, the depth map and two
+  fallback stills
+
+Because the scene carries every value, and the engine is the same code, the
+website draws the same picture as GEO_SC. Only the framing adapts to each
+screen (2.5). There's no build step and no dependencies. It's about 86 KB of
+JavaScript before compression.
 
 ---
 
@@ -39,7 +47,8 @@ cd ~/Sites/GEO_SC && npm start      # open http://localhost:5173
    disappears.
 2. Build the look as usual: spin, scan, background, effects.
 3. Keep it light enough for phones:
-   - **Depth from: Brightness** or **Flat**. AI depth isn't used on the website.
+   - Any **Depth from** works, AI included: the export carries the finished
+     depth map, so the website never runs the model.
    - **Particles: Medium** at most. The player lowers it on small screens anyway.
    - At most two or three effects. Trails and Datamosh are the heaviest.
    - Geometry, tracking and the VHS on-screen display aren't part of the
@@ -47,28 +56,37 @@ cd ~/Sites/GEO_SC && npm start      # open http://localhost:5173
 4. For a loop that never jumps, set **Spin** in whole turns (1, −1, 2…). All
    other auto motion already repeats every cycle.
 
-### 3. Save the look and export it
+### 3. Export for website
 
-1. Click **Save preset** and name it `Website home`.
-2. In Presets, click **Export presets**. You get `geo_sc-presets-<date>.json`.
-3. Make two fallback stills, shown before the animation loads and to anyone it
-   can't run for:
-   - Set Export → Shape to **Wide 16:9** and click **Save still**.
-   - Set Shape to **Reel 9:16** and click **Save still**.
+1. Click **Save preset** and name it `Website home`. The export folder takes
+   its name from the preset you're on.
+2. In the **Export** section, click **Export for website**. GEO_SC writes
+   `exports/website-home/` in the project folder, containing:
 
-### 4. Copy the files into the website
+   | File | What it is |
+   | --- | --- |
+   | `scene.json` | Every setting (including ones presets leave out), the camera, the source details, and a fingerprint of the engine code |
+   | `logo.png` | The exact pixels GEO_SC renders from |
+   | `depth.png` | The depth map at 16-bit precision, so even AI depth carries over without the model |
+   | `still-wide.jpg`, `still-tall.jpg` | 1920×1080 and 1080×1920 fallback stills of the current frame |
+
+   If you didn't start GEO_SC with `npm start`, you get one
+   `website-home.geo-sc-scene.json` download with the same files inside. The
+   folder is easier to work with.
+
+### 4. Copy the folder into the website
+
+```sh
+mkdir -p ~/Sites/your-website/assets/geo-sc
+cp -R ~/Sites/GEO_SC/exports/website-home ~/Sites/your-website/assets/geo-sc/home
+```
 
 ```
 your-website/
   assets/
     geo-sc/
-      home-presets.json   ← the exported presets file, renamed
-      logo.png            ← the same logo you used in GEO_SC
-      still-wide.png      ← the 16:9 still
-      still-tall.png      ← the 9:16 still
+      home/        ← the exported scene folder
 ```
-
-(Converting the stills to WebP is optional. The agent can do it.)
 
 ### 5. Start Claude Code in the website repo with access to GEO_SC
 
@@ -80,10 +98,10 @@ claude --add-dir ../GEO_SC
 Then paste:
 
 > Read ../GEO_SC/docs/website-embed.md and follow Part 2. Build the GEO_SC
-> player into this site and put it on the home page hero. The assets are in
-> assets/geo-sc/ and the preset is called "Website home". Keep the existing PHP
-> layout and styling. Show me the plan before you change any templates, then
-> work through the test checklist at the end of Part 2.
+> player into this site and put it on the home page hero, using the scene in
+> assets/geo-sc/home/. Keep the existing PHP layout and styling. Show me the
+> plan before you change any templates, then work through the test checklist
+> at the end of Part 2.
 
 ### 6. Check it yourself
 
@@ -98,9 +116,13 @@ Then paste:
 
 ### 7. Changing the look later
 
-Change it in GEO_SC, **Update** the `Website home` preset, export again and
-replace `assets/geo-sc/home-presets.json`. When GEO_SC's engine itself changes,
-ask the website agent to "re-sync the engine files from ../GEO_SC" (see 2.2).
+Change it in GEO_SC, **Update** the `Website home` preset, click **Export for
+website** again and copy the folder over the old one (step 4). Nothing else
+changes.
+
+When GEO_SC's engine itself has changed (a new effect, a fix), the browser
+console on the website warns that the scene was made with a different engine.
+Ask the website agent to "re-sync the engine files from ../GEO_SC" (see 2.2).
 
 ---
 
@@ -112,6 +134,10 @@ ask the website agent to "re-sync the engine files from ../GEO_SC" (see 2.2).
   sharp at any size and pixel density, and is cheap on phones.
 - Plain ES modules served as static files. No bundler, no npm packages, no CDN.
 - Don't change GEO_SC itself. Copy files from it.
+- **Identical output.** With the same engine files and the same scene, the
+  player must draw the same picture as GEO_SC at the same canvas size and
+  shape. Take every value from the scene. Don't recompute what the scene
+  already provides (depth, background key colour).
 - Keep the site's existing PHP templates and CSS conventions. Add the smallest
   possible markup, a scoped stylesheet and one module script.
 
@@ -132,9 +158,15 @@ Don't copy `main.js`, `media.js`, `tracking.js`, `geometry.js`, `encoder.js`,
 `recorder.js` or `presets.js`. They're the app, not the engine. Port the few
 functions you need from them (2.4).
 
-Write `assets/geo-sc/engine/VERSION` with the GEO_SC commit you copied from
-(`git -C ../GEO_SC rev-parse --short HEAD`). To re-sync later, copy the same
-six files again and update VERSION.
+Write `assets/geo-sc/engine/VERSION` with the engine fingerprint: the SHA-256
+of the six files joined in the order listed above. It's the same value GEO_SC
+writes into `scene.json` as `engine.sha256`:
+
+```sh
+cd ../GEO_SC/js && cat renderer.js shaders.js math.js backgrounds.js effects.js depth.js | shasum -a 256 | cut -d' ' -f1
+```
+
+To re-sync later, copy the same six files again and rewrite VERSION.
 
 ### 2.3 The player: `assets/geo-sc/player.js`
 
@@ -142,65 +174,94 @@ six files again and update VERSION.
 import { mount } from '/assets/geo-sc/player.js';
 
 const player = await mount(canvas, {
-  image: '/assets/geo-sc/logo.png',          // the logo
-  preset: '/assets/geo-sc/home-presets.json', // exported presets file (or a single preset object)
-  presetName: 'Website home',                 // which preset in the file
+  scene: '/assets/geo-sc/home/scene.json',   // the folder from Export for website
   still: document.querySelector('.hero-still'), // element to keep showing if the player can't run
   maxDpr: 2,             // never render above 2× pixel density
   pixelBudget: 2.5e6,    // most pixels drawn per frame, after DPR
   mobileScale: 1.35,     // extra logo size when the box is portrait
+  exact: false,          // true: no adaptive particle count or quality steps (see 2.5)
   interactive: true,     // cursor/touch push (no orbit, zoom or wheel on a website)
 });
 // player.pause(), player.resume(), player.destroy()
 ```
 
 `mount` resolves to `null`, and leaves the still showing, when the player
-can't or shouldn't run (2.5, step 7).
+can't or shouldn't run (2.5, step 7). Files in the scene are resolved relative
+to `scene.json`.
 
-### 2.4 Driving the engine (port from `../GEO_SC/js/main.js`)
+### 2.4 Loading the scene and driving the engine
 
-The renderer draws one frame from a plain settings object `f`:
-`renderer.render(f)`. GEO_SC builds `f` in `main.js`. The player does the same
-with fewer moving parts.
+**The scene format** (`scene.json`, written by `../GEO_SC/js/webexport.js` and
+`exportForWebsite()` in `main.js`):
 
-1. **Settings.** Port the `DEFAULTS` object and the two loops after it that add
-   every background and effect setting (`bg_<id>_<param>`, `fx_<id>_on`,
-   `fx_<id>_amount`, `fx_<id>_<param>`). Start from a copy of DEFAULTS and lay
-   the preset's `settings` over it. Keep only keys that exist in DEFAULTS with
-   the same type, as `clean()` does in `presets.js`. Apply `preset.camera`
-   (`ty`, `tp`, `tz`) as the starting camera.
-2. **Source.** Load the logo into an `ImageBitmap`. Scale it to 2048 px on its
-   long side at most (`prepareSource`). Then build the source object the
-   renderer expects:
-   ```js
-   const d = settings.depthMode === 'flat' ? flatDepth() : lumaDepth(img);
-   const src = {
-     color: renderer.colorTexture(img),
-     depth: renderer.depthTexture(...(settings.flipDepth ? flip(d) : d) ...), // data, width, height
-     aspect: img.width / img.height,
-     width: img.width,
-     key: cornerColor(img),   // port from main.js: background colour for Remove background
-     gpuDepth: false,
-     mirror: false,
-   };
-   ```
-   Treat a preset with `depthMode: 'ai'` as `'luma'`.
-3. **Per frame.** Port `tempo()`, `step(dt)`, `bgParams()`, `effectParams(beats)`
-   and `frameParams()`, with these changes:
+```jsonc
+{
+  "kind": "website-scene", "version": 1,
+  "engine": { "files": ["renderer.js", "..."], "sha256": "…" },
+  "settings": { /* every GEO_SC setting, e.g. "spin": 1, "bg": "film35", "fx_crt_on": true … */ },
+  "camera": { "ty": 0, "tp": 0, "tz": 1 },
+  "source": { "width": 1800, "height": 420, "aspect": 4.29, "key": [1, 1, 1],
+              "depthMode": "luma", "depthWidth": 512, "depthHeight": 119, "depthIncludesFlip": true },
+  "designedAt": { "width": 1080, "height": 1080, "format": "square" },
+  "files": { "logo": "logo.png", "depth": "depth.png", "stillWide": "still-wide.jpg", "stillTall": "still-tall.jpg" },
+  "unsupported": []   // features the look uses that this player doesn't draw (Geometry, Tracking, VHS on-screen display)
+}
+```
+
+1. **Engine check.** Fetch `engine/VERSION`. If it doesn't equal
+   `scene.engine.sha256`, `console.warn` once ("scene made with a different
+   GEO_SC engine; re-sync the engine files") and carry on.
+2. **Settings.** Port the `DEFAULTS` object from `main.js` and the two loops
+   after it that add every background and effect setting (`bg_<id>_<param>`,
+   `fx_<id>_on`, `fx_<id>_amount`, `fx_<id>_<param>`). Start from a copy of
+   DEFAULTS, then copy over every key in `scene.settings` that exists in
+   DEFAULTS with the same type. DEFAULTS only fills gaps (a scene from an older
+   GEO_SC). Start the camera at `scene.camera` (`ty`, `tp`, `tz`).
+3. **Source**: use the scene's files and values, never recompute them.
+   - Logo: `createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })`
+     on `logo.png`, then `renderer.colorTexture(bitmap)`.
+   - Depth: decode `depth.png` with `readDepthPNG` (port it from
+     `../GEO_SC/js/webexport.js`; value = (R × 256 + G) / 65535), then
+     `renderer.depthTexture(d.data, d.width, d.height)`. It already includes
+     Flip depth, and it's the same whether the look used brightness, flat or AI
+     depth. Don't flip it again and don't call `lumaDepth`.
+   - The source object the renderer expects:
+     ```js
+     const src = {
+       color, depth,
+       aspect: scene.source.aspect,
+       width: scene.source.width,
+       key: scene.source.key,   // background colour for Remove background
+       gpuDepth: false,
+       mirror: false,
+     };
+     ```
+4. **Per frame.** Port `tempo()`, `step(dt)`, `bgParams()`, `effectParams(beats)`
+   and `frameParams()` from `main.js`, with these changes:
    - `imageA` and `imageB` are both `src`, and `morph` is 0. Drop the morph,
-     preset-blend and recording code.
-   - The camera has no drag or wheel input. It eases toward the preset camera,
+     preset-blend, recording and tracking code.
+   - The camera has no drag or wheel input. It eases toward the scene camera,
      plus the auto motion (spin, tilt, wobble, dolly).
-   - Keep `DENSITY`, `COLOR_MODES` and `SCAN_AXES`. Density is overridden by
-     scaling (2.5, step 3).
+   - Keep `DENSITY`, `COLOR_MODES` and `SCAN_AXES` exactly as they are.
    - Finish with `Object.assign(f, renderer.matrices(f))`, as `frameParams` does.
-4. **Pointer.** Keep hover push and tap burst (`pointer.over`, `pointer.burst`,
+5. **Pointer.** Keep hover push and tap burst (`pointer.over`, `pointer.burst`,
    `renderer.pointerToWorld`). Use pointer events, and give the canvas
    `touch-action: pan-y` so the page still scrolls on phones. Don't add orbit,
    zoom or double-click: the canvas must never trap scrolling.
-5. **Not supported** in this player: Geometry, Tracking, the VHS on-screen
-   display, video and webcam sources. If the preset turns any of these on,
-   ignore it and log one `console.info`.
+6. **Not supported** in this player: everything in `scene.unsupported`
+   (Geometry, Tracking, the VHS on-screen display), plus video and webcam
+   sources. Log one `console.info` listing them, and don't draw them.
+
+**What's identical, and what adapts.** The engine, every setting, the logo
+pixels, the depth map and the camera are identical. Two things legitimately
+differ from GEO_SC:
+
+- **Framing**: the canvas takes the shape of the page's box, not GEO_SC's
+  export shape. To compare like for like, view both at the same shape.
+- **Particle count and pixel density** on small or slow screens (2.5, steps 3
+  and 4). With `exact: true` the player uses the scene's particle count
+  everywhere and never steps quality down. `?geo=exact` in the URL turns this
+  on for testing.
 
 ### 2.5 Scaling
 
@@ -222,13 +283,13 @@ with fewer moving parts.
    box a wide logo is width-limited and gets small. When `cssH > cssW`, use
    `scale = settings.scale * mobileScale`, capped so the logo's width stays
    within 96 % of the box.
-3. **Scale the particle count with the box.**
+3. **Scale the particle count with the box** (skipped when `exact`).
    `density = clamp(round(0.6 × √(cssW × cssH)), 300, DENSITY[settings.density])`.
-   That's about 400 on a phone and the preset's own value on a desktop. Dot
+   That's about 400 on a phone and the scene's own value on a desktop. Dot
    size is relative to particle spacing in the engine, so the look holds and
    only the cost changes.
-4. **Guard the frame rate.** Average the frame time over 2 s. If it's over
-   20 ms:
+4. **Guard the frame rate** (skipped when `exact`). Average the frame time
+   over 2 s. If it's over 20 ms:
    - first lower density by 25 % (not below 300)
    - then lower `maxDpr` to 1.5
    - then to 1
@@ -262,17 +323,15 @@ with fewer moving parts.
 ```html
 <section class="hero">
   <picture class="hero-still">
-    <source media="(orientation: portrait)" srcset="/assets/geo-sc/still-tall.png" />
-    <img src="/assets/geo-sc/still-wide.png" alt="INKRMN" width="1920" height="1080" />
+    <source media="(orientation: portrait)" srcset="/assets/geo-sc/home/still-tall.jpg" />
+    <img src="/assets/geo-sc/home/still-wide.jpg" alt="INKRMN" width="1920" height="1080" />
   </picture>
   <canvas class="hero-geo" aria-hidden="true"></canvas>
 </section>
 <script type="module">
   import { mount } from '/assets/geo-sc/player.js';
   mount(document.querySelector('.hero-geo'), {
-    image: '/assets/geo-sc/logo.png',
-    preset: '/assets/geo-sc/home-presets.json',
-    presetName: 'Website home',
+    scene: '/assets/geo-sc/home/scene.json',
     still: document.querySelector('.hero-still'),
   });
 </script>
@@ -294,6 +353,9 @@ background does. Keep the logo away from the edges of the stills.
 
 Run through these and report the results:
 
+- [ ] **Identical:** open GEO_SC with the same look at Square 1:1, and the
+  website with `?geo=exact` in a square window. Same picture, same motion.
+  Also check the console shows no engine-version warning.
 - [ ] Sizes 375×667, 390×844 (DPR 3), 768×1024, 1440×900 (DPR 2), 2560×1440.
   The logo is sharp, fitted and never cropped.
 - [ ] Resize live from narrow to wide and back. No stretching, no flashes, no
@@ -313,9 +375,9 @@ Run through these and report the results:
 
 ### 2.8 Done when
 
-- The look matches GEO_SC with the same preset. Put them side by side at the
-  same aspect.
+- The look matches GEO_SC from the same scene: identical at the same shape
+  with `exact`, and only framing and particle count differ otherwise.
 - Every item in 2.7 passes.
 - `assets/geo-sc/engine/` holds only unchanged GEO_SC files, plus `VERSION`.
-- The README or a short comment in the template says how to swap the preset or
-  re-sync the engine.
+- The README or a short comment in the template says how to swap in a new
+  scene folder or re-sync the engine.

@@ -51,6 +51,31 @@ createServer(async (req, res) => {
     });
     return;
   }
+  // "Export for website" writes a scene folder: exports/<name>/<file>.
+  const exportMatch = /^\/exports\/([a-z0-9-]{1,40})\/(scene\.json|logo\.png|depth\.png|still-wide\.jpg|still-tall\.jpg)$/.exec(
+    new URL(req.url, 'http://x').pathname,
+  );
+  if (req.method === 'PUT' && exportMatch) {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 40_000_000) req.destroy();
+      else chunks.push(chunk);
+    });
+    req.on('end', async () => {
+      try {
+        const dir = join(root, 'exports', exportMatch[1]);
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, exportMatch[2]), Buffer.concat(chunks));
+        res.writeHead(204, headers);
+      } catch {
+        res.writeHead(500, headers);
+      }
+      res.end();
+    });
+    return;
+  }
   try {
     let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (path.endsWith('/')) path += 'index.html';
