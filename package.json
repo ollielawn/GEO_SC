@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node serve.mjs",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "web": "node scripts/web.mjs"
   },
   "dependencies": {
     "onnxruntime-web": "1.20.1"

@@ -7,8 +7,10 @@ import { VideoSource, CameraSource } from './media.js';
 import { Tracker, drawTracking } from './tracking.js';
 import { ENGINE_FILES, engineHash, sourcePNG, depthPNG, saveScene } from './webexport.js';
 import { BACKGROUNDS } from './backgrounds.js';
-import { EFFECTS, PALETTES, CHARSETS } from './effects.js';
+import { EFFECTS } from './effects.js';
 import { PresetStore, STARTERS, NOT_IN_PRESETS, clean } from './presets.js';
+import * as look from './look.js';
+import { DEFAULTS, DENSITY, bgKey, fxKey, hexToRgb, isDark, TAU, fract, lookParams, stepClock, portraitScale, MOBILE_SCALE } from './look.js';
 
 // ---------------------------------------------------------------- settings
 
@@ -18,137 +20,11 @@ const FORMATS = {
   square: { w: 1080, h: 1080, label: 'Square 1:1' },
   wide: { w: 1920, h: 1080, label: 'Wide 16:9' },
 };
-const DENSITY = { sparse: 450, medium: 900, dense: 1400 };
-const COLOR_MODES = { original: 0, ink: 1, negative: 2, duotone: 3 };
-const SCAN_AXES = { depth: 0, across: 1, down: 2 };
 const QUALITY_BPP = { standard: 0.12, high: 0.25, max: 0.5 }; // bits per pixel per frame
 const MAX_SLOTS = 4;
 const STORAGE_KEY = 'geo_sc:settings:v1';
 const COLLAPSE_KEY = 'geo_sc:collapsed:v1';
-const TAU = Math.PI * 2;
 
-const DEFAULTS = {
-  depthMode: 'luma',
-  flipDepth: false,
-  key: 0.12,
-  density: 'medium',
-  size: 1.3,
-  depth: 0.6,
-  scale: 1.0,
-  // auto motion
-  bpm: 120,
-  bars: '2',
-  spin: 0,
-  tilt: 0,
-  sway: 0.3,
-  dolly: 0,
-  pulse: 0,
-  wave: 0,
-  waveSize: 2,
-  waveDir: 0,
-  ripple: 0,
-  rippleSize: 2,
-  twist: 0,
-  // manual motion
-  drift: 0.25,
-  speed: 1.0,
-  stream: 0.06,
-  wind: 160,
-  splash: 0.6,
-  cursorSize: 0.35,
-  // scan
-  scan: true,
-  scanAxis: 'depth',
-  scanSpeed: 0.5,
-  scanWidth: 0.06,
-  scanBurn: 0.3,
-  scanJitter: 0.5,
-  // trails
-  trails: false,
-  trailLength: 0.6,
-  // geometry
-  geo: false,
-  geoSource: 'corners',
-  geoCount: 40,
-  geoSpacing: 0.05,
-  geoLinks: 'nearest',
-  geoK: 2,
-  geoMaxLen: 0.3,
-  geoMark: 'cross',
-  geoMarkSize: 1,
-  geoLabel: 'value',
-  geoDecimals: 2,
-  geoFont: 'mono',
-  geoTextSize: 1,
-  geoColor: 'ink',
-  geoLineWidth: 1,
-  geoOpacity: 0.9,
-  geoBox: false,
-  geoReveal: false,
-  // background (per-background settings are added below from backgrounds.js)
-  bg: 'plain',
-  // tracking (moving or still sources)
-  track: false,
-  trackMode: 'brightness',
-  trackThresh: 0.6,
-  trackInvert: false,
-  trackKey: '#e2231a',
-  trackKeyTol: 0.25,
-  trackRes: '192',
-  trackBlur: 0.5,
-  trackClose: 1,
-  trackMinSize: 0.3,
-  trackMaxSize: 40,
-  trackMaxCount: 12,
-  trackSmooth: 0.5,
-  trackHold: 6,
-  trackLatency: 'smooth',
-  trackStyle: 'outline',
-  trackColor: 'accent',
-  trackLineWidth: 1.2,
-  trackFill: 0.35,
-  trackPad: 6,
-  trackMark: 'cross',
-  trackLabelId: true,
-  trackLabelSize: false,
-  trackLabelPos: false,
-  trackLabelBox: false,
-  trackFont: 'mono',
-  trackTextSize: 1,
-  trackLinks: 'none',
-  trackLinkK: 2,
-  trackEdges: false,
-  trackEdgeThresh: 0.25,
-  trackEdgeMin: 6,
-  trackEdgeWidth: 1,
-  trackEdgeOpacity: 0.8,
-  trackEdgeColor: 'ink',
-  hud: false,
-  // look
-  colorMode: 'original',
-  ink: '#111111',
-  accent: '#e2231a',
-  glow: false,
-  grain: 0.02,
-  // export
-  format: 'reel',
-  resolution: '1080',
-  smoothing: '2x',
-  fps: '60',
-  quality: 'high',
-  duration: 10,
-  presetBlend: '4',
-};
-
-// Settings for every background and effect come from their descriptions.
-const bgKey = (bg, p) => `bg_${bg}_${p}`;
-const fxKey = (fx, p) => `fx_${fx}_${p}`;
-for (const bg of BACKGROUNDS) for (const p of bg.params) DEFAULTS[bgKey(bg.id, p.id)] = p.def;
-for (const fx of EFFECTS) {
-  DEFAULTS[fxKey(fx.id, 'on')] = false;
-  DEFAULTS[fxKey(fx.id, 'amount')] = fx.amount ?? 1;
-  for (const p of fx.params) DEFAULTS[fxKey(fx.id, p.id)] = p.def;
-}
 
 // Backgrounds that have been retired fall back to something sensible.
 function validBg(id) {
@@ -589,10 +465,6 @@ let target = -1; // slot being morphed to (image B)
 let morph = 0;
 let aiState = { ok: false };
 
-function hexToRgb(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
-}
 
 // Downscale big images so textures stay within GPU limits and memory.
 function prepareSource(img) {
@@ -1175,12 +1047,6 @@ function renderPresetList() {
 
 // ---------------------------------------------------------------- tempo
 
-function tempo() {
-  const beat = 60 / S.bpm;
-  const bar = beat * 4;
-  const cycle = bar * Number(S.bars);
-  return { beat, bar, cycle };
-}
 
 let taps = [];
 function tap() {
@@ -1251,68 +1117,43 @@ function updateRing(zoom) {
 
 const clock = { time: 0, scan: 0, spin: 0, last: performance.now() };
 const MORPH_SECONDS = 1.8;
-const fract = (x) => x - Math.floor(x);
-let lastKeyIdx = -1;
+const mosh = { lastKeyIdx: -1 }; // datamosh keyframe state
+let stillScaleMul = 1; // the website player's portrait enlargement, for the tall still
+const tempo = () => look.tempo(S);
+const bgBase = () => look.bgBase(S);
 
-function bgBase() {
-  return S[bgKey(S.bg, 'c1')] || '#eeefec';
-}
-function isDark(hex) {
-  const [r, g, b] = hexToRgb(hex);
-  return 0.299 * r + 0.587 * g + 0.114 * b < 0.4;
+// One frame's parameters: the shared look (look.js) plus this app's pictures,
+// morph, cursor and camera matrices.
+function frameParams() {
+  const live = !rendering;
+  const f = lookParams(S, {
+    time: clock.time,
+    scan: clock.scan,
+    spin: clock.spin,
+    cam,
+    mosh,
+    scaleMul: stillScaleMul,
+    splash: (zoom) => {
+      const w = renderer.pointerToWorld(pointer.nx, pointer.ny, zoom);
+      const follow = live ? 1 - Math.exp(-(1 / 60) * 12) : 0;
+      for (let i = 0; i < 2; i++) pointer.world[i] += (w[i] - pointer.world[i]) * follow;
+      return { pos: pointer.world, amount: live ? S.splash * ((pointer.over ? 0.25 : 0) + pointer.burst * 1.4) : 0 };
+    },
+  });
+  const A = slots[current] || null;
+  f.imageA = A;
+  f.imageB = target !== -1 ? slots[target] : A;
+  f.morph = target !== -1 ? morph : 0;
+  f.morphBurst = 0.35;
+  Object.assign(f, renderer.matrices(f));
+  return f;
 }
 
-function bgParams() {
-  const def = BACKGROUNDS.find((b) => b.id === S.bg) || BACKGROUNDS[0];
-  const p = new Float32Array(12);
-  let i = 0;
-  const out = { type: def.type, p, c1: hexToRgb(bgBase()), c2: [0, 0, 0] };
-  for (const prm of def.params) {
-    const v = S[bgKey(def.id, prm.id)];
-    if (prm.type === 'color') out[prm.id] = hexToRgb(v);
-    else p[i++] = Number(v) || 0;
-  }
-  return out;
-}
-
-function effectParams(beats) {
-  const list = [];
-  for (const def of EFFECTS) {
-    if (!S[fxKey(def.id, 'on')]) continue;
-    const p = new Float32Array(12);
-    let i = 0;
-    const fx = { id: def.id, amount: S[fxKey(def.id, 'amount')], p, c1: [0, 0, 0], c2: [1, 1, 1] };
-    for (const prm of def.params) {
-      const v = S[fxKey(def.id, prm.id)];
-      if (prm.type === 'color') fx[prm.id] = hexToRgb(v);
-      else p[i++] = Number(v) || 0;
-    }
-    if (def.id === 'palette') {
-      const names = ['gameboy', 'cga1', 'cga2', 'ega', 'mac16', 'teletext', 'virtualboy'];
-      const idx = Number(S[fxKey('palette', 'palette')]);
-      const cols = names[idx] ? PALETTES[names[idx]] : [S.ink, S.accent, bgBase()];
-      fx.palette = new Float32Array(48);
-      cols.forEach((h, k) => fx.palette.set(hexToRgb(h), k * 3));
-      fx.paletteSize = cols.length;
-    }
-    if (def.id === 'ascii') fx.charset = CHARSETS[S[fxKey('ascii', 'charset')]] || CHARSETS.classic;
-    if (def.id === 'datamosh') {
-      const every = Number(S[fxKey('datamosh', 'keys')]);
-      const idx = every > 0 ? Math.floor(beats / every) : 0;
-      fx.keyframe = every > 0 && idx !== lastKeyIdx;
-      lastKeyIdx = idx;
-    }
-    list.push(fx);
-  }
-  return list;
-}
 let lastCount = 0;
 
 function step(dt) {
-  clock.time += dt;
-  clock.spin += (dt / tempo().cycle) * TAU * S.spin; // accumulated, so changing speed never jumps
+  stepClock(clock, S, dt);
   stepPresetBlend(dt);
-  clock.scan += dt * S.scanSpeed * 0.25;
   const ease = 1 - Math.exp(-dt * 8);
   cam.yaw += (cam.ty - cam.yaw) * ease;
   cam.pitch += (cam.tp - cam.pitch) * ease;
@@ -1329,83 +1170,6 @@ function step(dt) {
   }
 }
 
-function frameParams() {
-  const t = clock.time;
-  const tp = tempo();
-  const cycles = t / tp.cycle;
-  const cyclePhase = fract(cycles);
-  const barPhase = fract(t / tp.bar);
-  const beats = t / tp.beat;
-  const beatPhase = fract(beats);
-  const env = Math.exp(-beatPhase * 5);
-
-  const yaw = cam.yaw + clock.spin + Math.sin(TAU * cyclePhase) * 0.3 * S.sway;
-  const pitch = cam.pitch + (S.tilt * Math.PI) / 180 + Math.sin(2 * TAU * cyclePhase) * 0.12 * S.sway;
-  const zoom = cam.zoom * (1 + S.dolly * 0.35 * Math.sin(TAU * cyclePhase));
-
-  const live = !rendering;
-  const w = renderer.pointerToWorld(pointer.nx, pointer.ny, zoom);
-  const follow = live ? 1 - Math.exp(-(1 / 60) * 12) : 0;
-  for (let i = 0; i < 2; i++) pointer.world[i] += (w[i] - pointer.world[i]) * follow;
-  const splash = live ? S.splash * ((pointer.over ? 0.25 : 0) + pointer.burst * 1.4) : 0;
-
-  const A = slots[current] || null;
-  const B = target !== -1 ? slots[target] : A;
-  const keep = 0.75 + 0.235 * S.trailLength; // fraction of last frame kept
-  const f = {
-    imageA: A,
-    imageB: B,
-    morph: target !== -1 ? morph : 0,
-    morphBurst: 0.35,
-    time: t,
-    density: DENSITY[S.density],
-    size: S.size * (1 + S.pulse * env * 0.35),
-    depth: S.depth * (1 + S.pulse * env * 0.9),
-    scale: S.scale,
-    opacity: 1,
-    key: S.key,
-    drift: S.drift,
-    speed: S.speed,
-    stream: S.stream,
-    wind: (S.wind * Math.PI) / 180,
-    scatter: 0,
-    barPhase,
-    cyclePhase,
-    wave: S.wave,
-    waveFreq: S.waveSize,
-    waveAngle: (S.waveDir * Math.PI) / 180,
-    ripple: S.ripple,
-    rippleFreq: S.rippleSize,
-    twist: S.twist,
-    splashPos: pointer.world,
-    splash,
-    splashRadius: S.cursorSize,
-    scan: S.scan,
-    scanPos: -0.3 + 1.6 * fract(clock.scan),
-    scanWidth: S.scanWidth,
-    scanBurn: S.scanBurn,
-    scanJitter: S.scanJitter,
-    scanAxis: SCAN_AXES[S.scanAxis],
-    trails: S.trails,
-    trailFade: 1 - keep,
-    ink: hexToRgb(S.ink),
-    accent: hexToRgb(S.accent),
-    colorMode: COLOR_MODES[S.colorMode],
-    bg: bgParams(),
-    effects: effectParams(beats),
-    beatPhase,
-    beats,
-    paperDark: isDark(bgBase()),
-    flipDepth: S.flipDepth,
-    glow: S.glow,
-    grain: S.grain,
-    yaw,
-    pitch,
-    zoom,
-  };
-  Object.assign(f, renderer.matrices(f));
-  return f;
-}
 
 function geoSetFor(slot) {
   if (!slot) return null;
@@ -1829,7 +1593,7 @@ async function renderVideo() {
   pointer.burst = 0;
   renderer.needsClear = true;
   renderer.moshFresh = true;
-  lastKeyIdx = -1;
+  mosh.lastKeyIdx = -1;
   const started = performance.now();
   try {
     const blob = await encodeVideo({
@@ -1941,11 +1705,16 @@ document.getElementById('save-preset').addEventListener('click', quickSave);
 buttons['web-export'].addEventListener('click', exportForWebsite);
 
 // Draw the current frame at another size and return it as a PNG.
-async function renderStill(w, h, type = 'image/png', quality) {
+async function renderStill(w, h, type = 'image/png', quality, scaleMul = 1) {
   const prev = { w: renderer.width, h: renderer.height, ss: renderer.ss };
   renderer.setSize(w, h, prev.ss);
   renderer.needsClear = true;
-  drawFrame(true);
+  stillScaleMul = scaleMul;
+  try {
+    drawFrame(true);
+  } finally {
+    stillScaleMul = 1;
+  }
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, type, quality)); // snapshot is taken immediately
   renderer.setSize(prev.w, prev.h, prev.ss);
   renderer.needsClear = true;
@@ -1993,6 +1762,9 @@ async function exportForWebsite() {
         depthIncludesFlip: true,
       },
       designedAt: { width: renderer.width, height: renderer.height, format: S.format },
+      // The moment the stills show. The player starts here so the fade from still to live doesn't jump.
+      clock: { time: clock.time, scan: clock.scan, spin: clock.spin },
+      mobileScale: MOBILE_SCALE,
       files: { logo: 'logo.png', depth: 'depth.png', stillWide: 'still-wide.jpg', stillTall: 'still-tall.jpg' },
       unsupported,
     };
@@ -2001,13 +1773,13 @@ async function exportForWebsite() {
       'depth.png': await depthPNG(slot.depthData),
       // JPEG keeps the fallback stills light enough for a fast page load.
       'still-wide.jpg': await renderStill(1920, 1080, 'image/jpeg', 0.86),
-      'still-tall.jpg': await renderStill(1080, 1920, 'image/jpeg', 0.86),
+      'still-tall.jpg': await renderStill(1080, 1920, 'image/jpeg', 0.86, portraitScale(S, 1080 / 1920)),
     };
     const res = await saveScene(slug, scene, files, download);
     const note = unsupported.length ? ` Not on the website player yet: ${unsupported.join(', ')}.` : '';
     status(
       res.where === 'project'
-        ? `Exported to ${res.path} in the project folder. Copy that folder into the website.${note}`
+        ? `Exported to ${res.path}. Run "npm run web" to copy it, with the player, into your website.${note}`
         : `Downloaded ${res.path} (run the app with npm start to export a folder instead).${note}`,
       9000,
     );

@@ -95,7 +95,13 @@ The clock restarts at the start of every export, so a given set of settings alwa
 
 **Save still** exports a PNG of the current frame at full resolution.
 
-**Export for website** writes `exports/<preset name>/`: every setting, the camera, the exact logo pixels, a 16-bit depth map and two fallback stills. A website player can then draw exactly the same look. See [docs/website-embed.md](docs/website-embed.md).
+**Export for website** writes `exports/<preset name>/`: every setting, the camera, the exact logo pixels, a 16-bit depth map and two fallback stills. Then
+
+```sh
+npm run web -- ../your-website/geo-sc
+```
+
+copies the website player, the engine and your scenes into one self-contained folder for your website (or `dist/geo-sc/` with no folder given). It draws the same look as GEO_SC, adapted to every screen size. See [docs/website-embed.md](docs/website-embed.md).
 
 Instagram re-compresses everything you upload. Starting from a clean, high-bitrate file is still what keeps it sharp after that.
 
@@ -108,7 +114,8 @@ picture ──► depth map ──► background + particles (trails buffer) ─
 | File | Role |
 | --- | --- |
 | `index.html`, `css/style.css` | The page and panel |
-| `js/main.js` | Settings, panel, pictures, camera, the frame loop |
+| `js/main.js` | The panel, pictures, camera, export and the frame loop |
+| `js/look.js` | Settings, their defaults, and how they become one frame's parameters. Shared with the website player. |
 | `js/renderer.js` | WebGL2 setup, textures, the trails buffer, drawing |
 | `js/shaders.js` | The GLSL. Every particle's position and colour is worked out from scratch each frame from its id, the picture, the depth map, the time and the settings. There's no simulation state, which keeps it fast and makes recordings repeatable. |
 | `js/depth.js` | AI, brightness and flat depth |
@@ -122,7 +129,9 @@ picture ──► depth map ──► background + particles (trails buffer) ─
 | `output.html` | The clean output window |
 | `docs/video-and-tracking.md` | Design note for video, webcam and tracking |
 | `js/webexport.js` | Export for website: scene file, logo, 16-bit depth map, engine fingerprint |
-| `docs/website-embed.md` | How to put the engine on a website (steps, plus a build spec for the website's Claude agent) |
+| `js/player.js` | The website player: mounts a scene on a canvas, scales to any screen, falls back to the still |
+| `scripts/web.mjs`, `scripts/web/` | `npm run web`: copies the player, engine and scenes into one folder for a website, with its README and a demo page |
+| `docs/website-embed.md` | How to put the engine on a website: your steps, what to tell the website's agent, how it works |
 | `js/presets.js` | Preset storage (browser + `presets/user.json`) and the starter looks |
 | `serve.mjs` | A dependency-free local server that also saves presets into the project |
 | `scripts/setup.mjs` | Vendors the AI runtime and model |

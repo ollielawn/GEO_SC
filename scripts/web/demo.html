@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEO_SC player check</title>
+<!--
+  A test page for this folder. Serve the folder over http (modules don't load
+  from file://), e.g. `python3 -m http.server` in the folder, then open
+  demo.html. ?scene=<name> picks a scene, ?geo=exact turns off adaptations,
+  ?geo=off shows the still only, ?noguard keeps full quality on slow machines. Safe to leave on the site or to delete.
+-->
+<style>
+  :root { color-scheme: light dark; --bar: #111; --fg: #eee; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #777; font: 13px/1.4 system-ui, sans-serif; }
+  .bar { position: fixed; z-index: 2; left: 0; right: 0; bottom: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 12px; background: var(--bar); color: var(--fg); }
+  .bar button, .bar select { font: inherit; padding: 4px 10px; border: 1px solid #555; background: #222; color: var(--fg); border-radius: 3px; }
+  .bar button[aria-pressed="true"] { background: var(--fg); color: var(--bar); }
+  .bar output { margin-left: auto; font-variant-numeric: tabular-nums; opacity: 0.8; }
+  main { position: absolute; inset: 0 0 46px; display: grid; place-items: center; }
+
+  /* The embed itself: copy from here … */
+  .geo-hero { position: relative; overflow: hidden; width: 100%; height: 100%; }
+  .geo-hero { background: var(--geo-bg, #eeefec); }
+  .geo-hero img { position: absolute; left: 0; top: 50%; width: 100%; height: auto; transform: translateY(-50%); display: block; }
+  .geo-hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity 0.6s ease; }
+  .geo-hero canvas.is-ready { opacity: 1; }
+  /* … to here. */
+
+  main[data-frame="phone"] .geo-hero { width: 390px; height: 844px; max-height: 100%; }
+  main[data-frame="square"] .geo-hero { width: min(90vw, 80vh); height: min(90vw, 80vh); }
+  main[data-frame="banner"] .geo-hero { height: 45vh; }
+</style>
+</head>
+<body>
+<main data-frame="full">
+  <section class="geo-hero">
+    <picture>
+      <source id="still-tall" media="(orientation: portrait)">
+      <img id="still" alt="">
+    </picture>
+    <canvas aria-hidden="true"></canvas>
+  </section>
+</main>
+<div class="bar">
+  <select id="scene" aria-label="Scene"></select>
+  <button data-frame="full" aria-pressed="true">Full</button>
+  <button data-frame="phone">Phone</button>
+  <button data-frame="square">Square</button>
+  <button data-frame="banner">Banner</button>
+  <output id="stats"></output>
+</div>
+<script type="module">
+  import { mount } from './player.js';
+
+  const params = new URLSearchParams(location.search);
+  const manifest = await (await fetch('MANIFEST.json')).json();
+  const names = manifest.scenes.map((s) => s.name);
+  const name = names.includes(params.get('scene')) ? params.get('scene') : names[0];
+  const pick = document.getElementById('scene');
+  for (const n of names) pick.append(new Option(n, n, false, n === name));
+  pick.onchange = () => { params.set('scene', pick.value); location.search = params; };
+
+  const stats = document.getElementById('stats');
+  if (!name) {
+    stats.textContent = 'No scenes in this folder. In GEO_SC: Export for website, then npm run web.';
+  } else {
+    const dir = `scenes/${name}/`;
+    document.getElementById('still').src = `${dir}still-wide.jpg`;
+    document.getElementById('still-tall').srcset = `${dir}still-tall.jpg`;
+    // The scene's background colour, so the space around the still matches.
+    const scene = await (await fetch(`${dir}scene.json`)).json();
+    document.querySelector('.geo-hero').style.setProperty('--geo-bg', scene.settings[`bg_${scene.settings.bg}_c1`] || '#eeefec');
+    const player = await mount(document.querySelector('.geo-hero canvas'), { scene: dir, frameGuard: !params.has('noguard') });
+    window.player = player;
+    let frames = 0, since = performance.now();
+    (function tick(now) {
+      frames++;
+      if (now - since > 500) {
+        const s = player?.stats;
+        stats.textContent = player
+          ? `${Math.round((frames * 1000) / (now - since))} fps · ${s.width}×${s.height} · ${s.density} across · ×${s.scaleMul.toFixed(2)} · quality step ${s.level}`
+          : 'Player off (reduced motion, no WebGL2, or ?geo=off): showing the still';
+        frames = 0; since = now;
+      }
+      requestAnimationFrame(tick);
+    })(since);
+  }
+
+  for (const b of document.querySelectorAll('.bar button')) {
+    b.onclick = () => {
+      document.querySelector('main').dataset.frame = b.dataset.frame;
+      for (const x of document.querySelectorAll('.bar button')) x.setAttribute('aria-pressed', x === b);
+    };
+  }
+</script>
+</body>
+</html>

@@ -8,11 +8,13 @@
 //   still-wide.jpg  1920×1080 fallback still
 //   still-tall.jpg  1080×1920 fallback still
 //
-// The format is described in docs/website-embed.md (section 2.4).
+// `npm run web` copies these, with the player, into one folder for a website.
+// The format is described in docs/website-embed.md.
 
 // The engine files a website copies. Their combined SHA-256 lets the website
 // check it has the same engine version as the export.
-export const ENGINE_FILES = ['renderer.js', 'shaders.js', 'math.js', 'backgrounds.js', 'effects.js', 'depth.js'];
+// Must match ENGINE_FILES in scripts/web.mjs (same files, same order).
+export const ENGINE_FILES = ['renderer.js', 'shaders.js', 'math.js', 'backgrounds.js', 'effects.js', 'look.js'];
 
 export async function engineHash() {
   const parts = await Promise.all(
