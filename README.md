@@ -119,6 +119,7 @@ picture ──► depth map ──► background + particles (trails buffer) ─
 | `js/tracking.js` | Blob tracking (connected components, stable IDs, smoothing), edge tracing, and drawing boxes, labels and lines |
 | `output.html` | The clean output window |
 | `docs/video-and-tracking.md` | Design note for video, webcam and tracking |
+| `docs/website-embed.md` | How to put the engine on a website (steps, plus a build spec for the website's Claude agent) |
 | `js/presets.js` | Preset storage (browser + `presets/user.json`) and the starter looks |
 | `serve.mjs` | A dependency-free local server that also saves presets into the project |
 | `scripts/setup.mjs` | Vendors the AI runtime and model |
