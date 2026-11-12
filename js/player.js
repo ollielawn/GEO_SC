@@ -244,6 +244,10 @@ export async function mount(canvas, options = {}) {
         return { pos: pointer.world, amount: o.interactive ? S.splash * ((pointer.over ? 0.25 : 0) + pointer.burst * 1.4) : 0 };
       },
     });
+    // Scatter: each particle thrown out in its own direction, as in GEO_SC's
+    // morph burst. Not a saved setting; a page can set player.settings.scatter
+    // live (say, start at 0.6 and ease to 0 for a cloud that settles).
+    f.scatter = Math.max(0, +S.scatter || 0);
     if (forming.on) {
       // Same shape and depth as the image, but no colour: every particle starts invisible.
       f.imageA = { ...image, color: renderer.blank.color };

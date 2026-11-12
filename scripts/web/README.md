@@ -107,7 +107,7 @@ Size the canvas with CSS only. Never set its `width` and `height` attributes: th
 | `formBurst` | `0.35` | How far the particles scatter on the way in |
 | `onReady` | | Called after the first frame |
 
-The player has `pause()`, `resume()` and `destroy()` methods, and `form()`, which flies the particles in from nothing (use it with `form: true`; calling it again replays it). `player.settings` is the live settings object: changing a value there (say `player.settings.stream = 0.4` on hover) takes effect on the next frame.
+The player has `pause()`, `resume()` and `destroy()` methods, and `form()`, which flies the particles in from nothing (use it with `form: true`; calling it again replays it). `player.settings` is the live settings object: changing a value there (say `player.settings.stream = 0.4` on hover) takes effect on the next frame. It also takes `scatter` (0 by default), which isn't a GEO_SC setting: it throws each particle out in its own direction, like the morph burst. Easing it from about 0.6 down to 0 makes a cloud that settles into the image.
 
 ## Checking
 
