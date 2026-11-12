@@ -31,6 +31,9 @@ const OPTIONS = {
   exact: false, // true: same particle count and scale as GEO_SC, no adaptations
   frameGuard: true, // step quality down on devices that can't keep up
   reducedMotion: 'still', // 'still': show the still for prefers-reduced-motion; 'play': ignore it
+  form: false, // true: start with no particles; player.form() flies them in, like Space in GEO_SC
+  formSeconds: 1.8, // how long forming takes (GEO_SC's morph time)
+  formBurst: 0.35, // how far the particles scatter on the way in (GEO_SC's morph burst)
   onReady: null, // called after the first frame is drawn
 };
 
@@ -121,6 +124,9 @@ export async function mount(canvas, options = {}) {
   // Start where the fallback stills were taken, so fading in from the still doesn't jump.
   const clock = { time: 0, scan: 0, spin: 0, ...(o.exact ? {} : scene.clock) };
   const mosh = { lastKeyIdx: -1 };
+  // Forming: a morph from an empty copy of the image to the image itself.
+  // t runs 0 to 1; until form() is called it stays at 0 (nothing showing).
+  const forming = { on: !!o.form, t: 0, playing: false };
   const pointer = { nx: 0.5, ny: 0.5, over: false, burst: 0, world: [0, 0, 0] };
 
   // ---- quality state (the frame-rate guard steps this down)
@@ -238,10 +244,18 @@ export async function mount(canvas, options = {}) {
         return { pos: pointer.world, amount: o.interactive ? S.splash * ((pointer.over ? 0.25 : 0) + pointer.burst * 1.4) : 0 };
       },
     });
-    f.imageA = image;
-    f.imageB = image;
-    f.morph = 0;
-    f.morphBurst = 0.35;
+    if (forming.on) {
+      // Same shape and depth as the image, but no colour: every particle starts invisible.
+      f.imageA = { ...image, color: renderer.blank.color };
+      f.imageB = image;
+      f.morph = forming.t;
+      f.morphBurst = o.formBurst;
+    } else {
+      f.imageA = image;
+      f.imageB = image;
+      f.morph = 0;
+      f.morphBurst = 0.35;
+    }
     Object.assign(f, renderer.matrices(f));
     return f;
   }
@@ -288,6 +302,10 @@ export async function mount(canvas, options = {}) {
     last = now;
     stepClock(clock, S, dt);
     pointer.burst *= Math.exp(-dt * 2.5);
+    if (forming.playing) {
+      forming.t += dt / Math.max(0.05, o.formSeconds);
+      if (forming.t >= 1) Object.assign(forming, { on: false, t: 0, playing: false });
+    }
     draw();
     raf = requestAnimationFrame(loop);
   }
@@ -367,6 +385,12 @@ export async function mount(canvas, options = {}) {
     pause() {
       held = true;
       update();
+    },
+    // Fly the particles in from nothing (start the page with { form: true }).
+    // Calling it again replays it.
+    form() {
+      Object.assign(forming, { on: true, t: 0, playing: true });
+      if (!running) draw();
     },
     resume() {
       held = false;
