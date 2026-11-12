@@ -102,9 +102,12 @@ Size the canvas with CSS only. Never set its `width` and `height` attributes: th
 | `exact` | `false` | No adaptations: GEO_SC's full particle count and scale |
 | `frameGuard` | `true` | Step quality down on devices that can't keep up |
 | `reducedMotion` | `'still'` | `'play'` ignores the visitor's reduced-motion setting |
+| `form` | `false` | Start with no particles showing. Call `player.form()` to fly them in, like pressing Space in GEO_SC |
+| `formSeconds` | `1.8` | How long forming takes |
+| `formBurst` | `0.35` | How far the particles scatter on the way in |
 | `onReady` | | Called after the first frame |
 
-The player has `pause()`, `resume()` and `destroy()` methods.
+The player has `pause()`, `resume()` and `destroy()` methods, and `form()`, which flies the particles in from nothing (use it with `form: true`; calling it again replays it). `player.settings` is the live settings object: changing a value there (say `player.settings.stream = 0.4` on hover) takes effect on the next frame.
 
 ## Checking
 
